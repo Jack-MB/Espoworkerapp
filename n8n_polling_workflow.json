@@ -1,0 +1,276 @@
+{
+  "name": "EspoCRM Firebase Polling",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "action": "subtract",
+        "value": 4,
+        "unit": "minutes",
+        "outputFormat": "custom",
+        "customFormat": "yyyy-MM-dd HH:mm:ss"
+      },
+      "id": "datetime",
+      "name": "Date & Time",
+      "type": "n8n-nodes-base.dateTime",
+      "typeVersion": 1,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "url": "https://crm.mb-scc.de/api/v1/Notification",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where[0][attribute]",
+              "value": "createdAt"
+            },
+            {
+              "name": "where[0][type]",
+              "value": "greaterThanOrEquals"
+            },
+            {
+              "name": "where[0][value]",
+              "value": "={{ $json.date }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get_notifications",
+      "name": "Abfrage Notifications",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "list",
+        "options": {}
+      },
+      "id": "item_lists",
+      "name": "Item Lists",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 1,
+      "position": [
+        600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "url": "=https://crm.mb-scc.de/api/v1/User/{{ $json.userId }}",
+        "options": {}
+      },
+      "id": "get_user",
+      "name": "Hole User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isAdmin }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "ist_admin_check",
+      "name": "Ist User Admin?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Item Lists').item.json.relatedType }}",
+              "operation": "contains",
+              "value2": "Slot"
+            },
+            {
+              "value1": "={{ $('Item Lists').item.json.relatedType }}",
+              "operation": "contains",
+              "value2": "Urlaub"
+            },
+            {
+              "value1": "={{ $('Item Lists').item.json.relatedType }}",
+              "operation": "contains",
+              "value2": "CKrankentage"
+            },
+            {
+              "value1": "={{ $('Item Lists').item.json.relatedType }}",
+              "operation": "contains",
+              "value2": "CWachbuch"
+            },
+            {
+              "value1": "={{ $('Item Lists').item.json.relatedType }}",
+              "operation": "contains",
+              "value2": "Meeting"
+            },
+            {
+              "value1": "={{ $('Item Lists').item.json.relatedType }}",
+              "operation": "contains",
+              "value2": "CAbwesenheitsnotiz"
+            }
+          ]
+        },
+        "combineConditions": "ANY"
+      },
+      "id": "darf_worker_sehen",
+      "name": "Darf Worker Entity sehen?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fcm.googleapis.com/v1/projects/espocrm-worker-app/messages:send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"token\": \"{{ $json.cFcmToken }}\",\n    \"notification\": {\n      \"title\": \"EspoCRM Update\",\n      \"body\": \"Es gibt Neuigkeiten (Kategorie: {{ $('Item Lists').item.json.relatedType }}).\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "firebase_push",
+      "name": "Firebase Push",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        1400,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Date & Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Date & Time": {
+      "main": [
+        [
+          {
+            "node": "Abfrage Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abfrage Notifications": {
+      "main": [
+        [
+          {
+            "node": "Item Lists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Item Lists": {
+      "main": [
+        [
+          {
+            "node": "Hole User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hole User": {
+      "main": [
+        [
+          {
+            "node": "Ist User Admin?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ist User Admin?": {
+      "main": [
+        [
+          {
+            "node": "Firebase Push",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Darf Worker Entity sehen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Darf Worker Entity sehen?": {
+      "main": [
+        [
+          {
+            "node": "Firebase Push",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

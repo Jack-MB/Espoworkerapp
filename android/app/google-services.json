@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "426875516268",
+    "project_id": "espocrm-worker-app",
+    "storage_bucket": "espocrm-worker-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:426875516268:android:df808040204face42a2f49",
+        "android_client_info": {
+          "package_name": "com.example.espo_worker_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWzF3XFp__s5IPv1_fDLb-tW9cu41n3Es"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:426875516268:android:2856c749964d4b342a2f49",
+        "android_client_info": {
+          "package_name": "com.example.espo_worker_app.admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWzF3XFp__s5IPv1_fDLb-tW9cu41n3Es"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

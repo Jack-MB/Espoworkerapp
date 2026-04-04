@@ -1,0 +1,46 @@
+name: espo_worker_app
+description: EspoCRM Worker App.
+publish_to: 'none'
+version: 1.2.0+2
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  flutter_secure_storage: ^10.0.0
+  local_auth: ^2.1.6
+  shared_preferences: ^2.2.2
+  provider: ^6.1.1
+  workmanager: 0.9.0
+  cupertino_icons: ^1.0.2
+  url_launcher: ^6.2.4
+  path_provider: ^2.1.2
+  open_filex: ^4.4.0
+  syncfusion_flutter_pdfviewer: ^33.1.44
+  flutter_html: ^3.0.0-beta.2
+  image_picker: ^1.1.2
+  syncfusion_flutter_calendar: ^33.1.44
+  intl: ^0.20.2
+  flutter_local_notifications: ^21.0.0
+  flutter_localizations:
+    sdk: flutter
+  file_picker: ^10.3.10
+  geolocator: ^14.0.2
+  safe_device: ^1.3.8
+  firebase_core: ^4.6.0
+  firebase_messaging: ^16.1.3
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.14.4
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/app_icon.png"
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/app_icon.png"
