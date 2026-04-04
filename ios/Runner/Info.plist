@@ -53,6 +53,14 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Die App benötigt Zugriff auf deinen Standort, um den Check-in am Einsatzort zu verifizieren.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Die App benötigt Zugriff auf deinen Standort, um den Check-in am Einsatzort zu verifizieren.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Die App benötigt Zugriff auf die Kamera, um Fotos von Dokumenten oder Berichten zu machen.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Die App benötigt Zugriff auf deine Fotogalerie, damit du vorhandene Dokumente hochladen kannst.</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
