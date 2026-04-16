@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:426875516268:android:df808040204face42a2f49",
         "android_client_info": {
-          "package_name": "com.example.espo_worker_app"
+          "package_name": "com.mbsecurity.worker"
         }
       },
       "oauth_client": [],
@@ -28,7 +28,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:426875516268:android:2856c749964d4b342a2f49",
         "android_client_info": {
-          "package_name": "com.example.espo_worker_app.admin"
+          "package_name": "com.mbsecurity.worker.admin"
         }
       },
       "oauth_client": [],

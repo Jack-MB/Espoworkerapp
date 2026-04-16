@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.espo_worker_app"
+    namespace = "com.mbsecurity.worker"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -22,7 +22,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.espo_worker_app"
+        applicationId = "com.mbsecurity.worker"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -34,12 +34,12 @@ android {
     productFlavors {
         create("worker") {
             dimension = "app"
-            applicationId = "com.example.espo_worker_app"
+            applicationId = "com.mbsecurity.worker"
             resValue("string", "app_name", "MB-Worker")
         }
         create("admin") {
             dimension = "app"
-            applicationId = "com.example.espo_worker_app.admin"
+            applicationId = "com.mbsecurity.worker.admin"
             resValue("string", "app_name", "MB-Admin")
         }
     }

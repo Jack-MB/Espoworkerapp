@@ -1,4 +1,4 @@
-package com.example.espo_worker_app
+package com.mbsecurity.worker
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

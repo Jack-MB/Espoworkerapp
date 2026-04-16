@@ -11,12 +11,17 @@ import 'core/app_theme.dart';
 import 'services/acl_service.dart';
 
 import 'package:workmanager/workmanager.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'services/firebase_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   if (!kIsWeb) {
     try {
+      // Initialize Firebase via custom service
+      await FirebaseService().init();
+      
       // Initialize local notifications
       await NotificationService().initialize();
       // Initialize background worker
