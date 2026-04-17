@@ -61,6 +61,8 @@
 	<string>Die App benötigt Zugriff auf die Kamera, um Fotos von Dokumenten oder Berichten zu machen.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Die App benötigt Zugriff auf deine Fotogalerie, damit du vorhandene Dokumente hochladen kannst.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Die App nutzt biometrische Authentifizierung zur sicheren Anmeldung.</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

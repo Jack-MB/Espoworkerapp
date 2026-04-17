@@ -19,6 +19,8 @@ void main() async {
   
   if (!kIsWeb) {
     try {
+      /* 
+      // Temporarily disabled to debug startup crash
       // Initialize Firebase via custom service
       await FirebaseService().init();
       
@@ -28,6 +30,8 @@ void main() async {
       await PollingService().initialize();
       // Start polling every 15 minutes (Android minimum)
       await PollingService().schedulePolling(const Duration(minutes: 15));
+      */
+      
       // Initialize ACL service
       await AclService().init();
     } catch (e) {
