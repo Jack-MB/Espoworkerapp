@@ -6,6 +6,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import '../models/document.dart';
 import '../core/constants.dart';
+import '../core/server_config.dart';
 import '../services/secure_storage_service.dart';
 
 class DocumentViewerScreen extends StatefulWidget {
@@ -45,7 +46,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
     
     setState(() {
       _headers = headers;
-      _downloadUrl = '${AppConstants.baseUrl}/?entryPoint=download&id=${widget.document.fileId}';
+      _downloadUrl = '${ServerConfig().baseUrl}/?entryPoint=download&id=${widget.document.fileId}';
     });
   }
 

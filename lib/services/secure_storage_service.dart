@@ -12,6 +12,7 @@ class SecureStorageService {
   static const _keyAngestellteName = 'angestellteName';
   static const _keyAclData = 'acl_data';
   static const _keyIsAdmin = 'is_admin';
+  static const _keyServerUrl = 'server_url';
 
   Future<void> saveToken(String token) async {
     await _storage.write(key: _keyToken, value: token);
@@ -80,6 +81,14 @@ class SecureStorageService {
   Future<bool> getIsAdmin() async {
     final val = await _storage.read(key: _keyIsAdmin);
     return val == 'true';
+  }
+
+  Future<void> saveServerUrl(String url) async {
+    await _storage.write(key: _keyServerUrl, value: url);
+  }
+
+  Future<String?> getServerUrl() async {
+    return await _storage.read(key: _keyServerUrl);
   }
 
   Future<void> write(String key, String value) async {

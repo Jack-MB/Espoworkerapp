@@ -1,9 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart' show debugPrint;
-import '../core/constants.dart';
+import '../core/server_config.dart';
 import 'secure_storage_service.dart';
 import '../models/wachbuch.dart';
 import '../models/slot.dart';
@@ -21,11 +20,24 @@ class ApiService {
 
   Future<bool> pingServer() async {
     try {
-      final url = Uri.parse('${AppConstants.apiUrl}/App/user');
-      // Just a HEAD or quick GET, without auth if we just want reachability
-      // but App/user might return 401, which is enough to know it's there.
+      final url = Uri.parse('${ServerConfig().apiUrl}/App/user');
       final response = await http.get(url).timeout(const Duration(seconds: 5));
-      return true; // We got a response, even if 401
+      // 200, 401, 403 all mean "server reachable"
+      return response.statusCode < 500;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Validates that the given [baseUrl] points to a reachable EspoCRM instance.
+  /// Returns true if the server responds (even with 401).
+  static Future<bool> pingCustomUrl(String baseUrl) async {
+    try {
+      final normalized = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+      final url = Uri.parse('$normalized/api/v1/App/user');
+      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      // 200, 401, 403 all mean "server is there and running EspoCRM"
+      return response.statusCode < 500;
     } catch (_) {
       return false;
     }
@@ -35,12 +47,12 @@ class ApiService {
     final String username = rawUsername.trim();
     final String password = rawPassword.trim();
     
-    debugPrint('Attempting login for: $username to \${AppConstants.apiUrl}/App/user');
+    debugPrint('Attempting login for: $username to \${ServerConfig().apiUrl}/App/user');
 
     final bool isApiKey = password.length > 20 && !password.contains(' ');
 
     if (isApiKey) {
-      final url = Uri.parse('${AppConstants.apiUrl}/App/user');
+      final url = Uri.parse('${ServerConfig().apiUrl}/App/user');
       final headers = {
         'Accept': 'application/json',
         'X-Api-Key': password
@@ -59,7 +71,7 @@ class ApiService {
     }
 
     // Standard User Login via Basic Auth GET App/user
-    final url = Uri.parse('${AppConstants.apiUrl}/App/user');
+    final url = Uri.parse('${ServerConfig().apiUrl}/App/user');
     final String basicAuth = 'Basic ' + base64Encode(utf8.encode('$username:$password'));
     
     try {
@@ -143,7 +155,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>?> getObjektCoordinates(String id) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Objekte/$id?select=latk,lonK,rad');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Objekte/$id?select=latk,lonK,rad');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -175,7 +187,7 @@ class ApiService {
   }
 
   Future<Slot?> getSlotById(String id) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Slots/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/$id');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Slot.fromJson(json.decode(response.body));
@@ -184,7 +196,7 @@ class ApiService {
   }
 
   Future<dynamic> getMetadata() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Metadata');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Metadata');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return json.decode(response.body);
@@ -193,7 +205,7 @@ class ApiService {
   }
 
   Future<bool> patchSlot(String slotId, Map<String, dynamic> data) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Slots/$slotId');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/$slotId');
     final response = await http.patch(
       url,
       headers: await _getHeaders(),
@@ -207,7 +219,7 @@ class ApiService {
   }
 
   Future<List<Wachbuch>> getWachbuchs() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/CWachbuch?maxSize=50&orderBy=createdAt&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CWachbuch?maxSize=50&orderBy=createdAt&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     debugPrint('getWachbuchs status: ${response.statusCode}');
     if (response.statusCode == 200) {
@@ -231,7 +243,7 @@ class ApiService {
 
   /// Fetches a single Wachbuch record by ID (includes dateinFotos* fields).
   Future<Wachbuch?> getWachbuchById(String id) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/CWachbuch/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CWachbuch/$id');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Wachbuch.fromJson(json.decode(response.body));
@@ -240,7 +252,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>?> getSelfUser() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/App/user');
+    final url = Uri.parse('${ServerConfig().apiUrl}/App/user');
     final headers = await _getHeaders();
     try {
       final response = await http.get(url, headers: headers);
@@ -265,7 +277,7 @@ class ApiService {
     final endPlusOne = end.add(const Duration(days: 1));
     final endStr = '${endPlusOne.year.toString().padLeft(4, '0')}-${endPlusOne.month.toString().padLeft(2, '0')}-${endPlusOne.day.toString().padLeft(2, '0')}';
 
-    final baseUri = Uri.parse(AppConstants.apiUrl);
+    final baseUri = Uri.parse(ServerConfig().apiUrl);
     final url = Uri(
       scheme: baseUri.scheme,
       host: baseUri.host,
@@ -297,7 +309,7 @@ class ApiService {
 
   Future<List<Note>> getWachbuchNotes(String wachbuchId) async {
     // Use Uri constructor to avoid double-encoding of bracket characters
-    final baseUri = Uri.parse(AppConstants.apiUrl);
+    final baseUri = Uri.parse(ServerConfig().apiUrl);
     final url = Uri(
       scheme: baseUri.scheme,
       host: baseUri.host,
@@ -327,7 +339,7 @@ class ApiService {
   }
 
   Future<bool> createWachbuchNote(String wachbuchId, String text) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Note');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Note');
     final headers = await _getHeaders();
     final body = json.encode({
       'post': text,
@@ -347,7 +359,7 @@ class ApiService {
     String parentType = 'Note',
     String field = 'attachments',
   }) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Attachment');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Attachment');
     final headers = await _getHeaders();
     final base64Data = base64Encode(bytes);
     final dataUri = 'data:$mimeType;base64,$base64Data';
@@ -375,7 +387,7 @@ class ApiService {
     String text,
     List<String> attachmentIds,
   ) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Note');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Note');
     final headers = await _getHeaders();
     final body = json.encode({
       'post': text,
@@ -391,7 +403,7 @@ class ApiService {
   }
 
   Future<List<Urlaub>> getUrlaubs() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Urlaub?maxSize=100&orderBy=createdAt&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Urlaub?maxSize=100&orderBy=createdAt&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -403,7 +415,7 @@ class ApiService {
   }
 
   Future<List<Krankentage>> getKrankentage() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/CKrankentage?maxSize=100&orderBy=createdAt&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankentage?maxSize=100&orderBy=createdAt&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -419,7 +431,7 @@ class ApiService {
     required String dateEnd,
     required String description,
   }) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Urlaub');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Urlaub');
     final headers = await _getHeaders();
     final angestellteId = await _storageService.getAngestellteId();
     final assignedUserId = await _storageService.getAssignedUserId();
@@ -447,7 +459,7 @@ class ApiService {
     required String description,
     String? krankenscheinId,
   }) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/CKrankentage');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankentage');
     final headers = await _getHeaders();
     final angestellteId = await _storageService.getAngestellteId();
     final assignedUserId = await _storageService.getAssignedUserId();
@@ -471,7 +483,7 @@ class ApiService {
   }
 
   Future<bool> updateKrankentage(String id, String krankenscheinId) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/CKrankentage/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankentage/$id');
     final headers = await _getHeaders();
     final body = json.encode({
       'krankenscheinId': krankenscheinId,
@@ -481,7 +493,7 @@ class ApiService {
   }
 
   Future<List<Angestellte>> getAngestellte() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Angestellte?maxSize=100&orderBy=name&order=asc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte?maxSize=100&orderBy=name&order=asc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -493,7 +505,7 @@ class ApiService {
   }
 
   Future<Angestellte?> getAngestellteById(String id) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Angestellte/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$id');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Angestellte.fromJson(json.decode(response.body));
@@ -502,7 +514,7 @@ class ApiService {
   }
 
   Future<bool> updateAngestellte(String id, Map<String, dynamic> updates) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Angestellte/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$id');
     final headers = await _getHeaders();
     final body = json.encode(updates);
     final response = await http.put(url, headers: headers, body: body);
@@ -510,7 +522,7 @@ class ApiService {
   }
 
   Future<List<EspoDocument>> getDocuments() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Document?maxSize=50&orderBy=createdAt&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Document?maxSize=50&orderBy=createdAt&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -522,7 +534,7 @@ class ApiService {
   }
 
   Future<List<EspoNotification>> getNotifications() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Notification?maxSize=20');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Notification?maxSize=20');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -534,7 +546,7 @@ class ApiService {
   }
 
   Future<bool> markNotificationRead(String id) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Notification/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Notification/$id');
     final headers = await _getHeaders();
     headers['Content-Type'] = 'application/json';
     final response = await http.put(url, headers: headers, body: json.encode({'read': true}));
@@ -542,7 +554,7 @@ class ApiService {
   }
 
   Future<List<Abwesenheit>> getAbwesenheiten() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/CAbwesenheitsnotiz?maxSize=100&orderBy=dateStart&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotiz?maxSize=100&orderBy=dateStart&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -560,7 +572,7 @@ class ApiService {
     required String description,
     bool isAllDay = false,
   }) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/CAbwesenheitsnotiz');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotiz');
     final headers = await _getHeaders();
     final angestellteId = await _storageService.getAngestellteId();
     final assignedUserId = await _storageService.getAssignedUserId();
@@ -583,7 +595,7 @@ class ApiService {
   }
 
   Future<List<Meeting>> getMeetings() async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Meeting?maxSize=50&orderBy=dateStart&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Meeting?maxSize=50&orderBy=dateStart&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -595,7 +607,7 @@ class ApiService {
   }
 
   Future<Meeting?> getMeetingById(String id) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Meeting/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Meeting/$id');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Meeting.fromJson(json.decode(response.body));
@@ -604,7 +616,7 @@ class ApiService {
   }
 
   Future<bool> updateMeetingStatus(String id, String status) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Meeting/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Meeting/$id');
     final headers = await _getHeaders();
     final body = json.encode({'status': status});
     final response = await http.put(url, headers: headers, body: body);
@@ -620,7 +632,7 @@ class ApiService {
     String? parentType,
     List<String>? usersIds,
   }) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/Meeting');
+    final url = Uri.parse('${ServerConfig().apiUrl}/Meeting');
     final headers = await _getHeaders();
     final selfUserId = await _storageService.getAssignedUserId();
     
@@ -647,7 +659,7 @@ class ApiService {
   }
 
   Future<List<Map<String, dynamic>>> searchEntities(String entityType, String query) async {
-    final url = Uri.parse('${AppConstants.apiUrl}/$entityType?maxSize=20&where[0][type]=contains&where[0][attribute]=name&where[0][value]=$query');
+    final url = Uri.parse('${ServerConfig().apiUrl}/$entityType?maxSize=20&where[0][type]=contains&where[0][attribute]=name&where[0][value]=$query');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -662,7 +674,7 @@ class ApiService {
     final headers = await _getHeaders();
     
     // Check Meetings
-    final meetUrl = Uri.parse('${AppConstants.apiUrl}/Meeting?maxSize=1'
+    final meetUrl = Uri.parse('${ServerConfig().apiUrl}/Meeting?maxSize=1'
       '&where[0][type]=isParticipant&where[0][value]=$userId'
       '&where[1][type]=between&where[1][attribute]=dateStart&where[1][value]=$start&where[1][value]=$end');
     // Note: EspoCRM 'between' date filters usually check if start is in range. 
@@ -675,7 +687,7 @@ class ApiService {
     }
 
     // Check Slots (Shifts)
-    final slotUrl = Uri.parse('${AppConstants.apiUrl}/Slot?maxSize=1'
+    final slotUrl = Uri.parse('${ServerConfig().apiUrl}/Slot?maxSize=1'
       '&where[0][type]=equals&where[0][attribute]=assignedUserId&where[0][value]=$userId'
       '&where[1][type]=between&where[1][attribute]=dateStart&where[1][value]=$start&where[1][value]=$end');
     
@@ -713,7 +725,7 @@ class ApiService {
     // 1. Update User
     if (userId != null) {
       try {
-        final url = Uri.parse('${AppConstants.apiUrl}/User/$userId');
+        final url = Uri.parse('${ServerConfig().apiUrl}/User/$userId');
         debugPrint('Syncing User FCM Token to $url');
         final response = await http.patch(url, headers: headers, body: payload);
 
@@ -734,7 +746,7 @@ class ApiService {
     // 2. Update Angestellte (Employee) - redundant safe bet
     if (angId != null) {
       try {
-        final url = Uri.parse('${AppConstants.apiUrl}/Angestellte/$angId');
+        final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$angId');
         debugPrint('Syncing Angestellte FCM Token to $url');
         final response = await http.patch(url, headers: headers, body: payload);
         if (response.statusCode == 200) {

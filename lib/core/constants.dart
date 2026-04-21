@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 class AppConstants {
-  static const String baseUrl = kIsWeb ? 'http://localhost:8080' : 'https://crm.mb-scc.de';
-  static const String apiUrl = '$baseUrl/api/v1';
+  // Server URL is now managed dynamically via ServerConfig
 
   // EspoCRM primary color hints (Slate / Dark Blue)
   static const Color primaryColor = Color(0xFF173D5D); // Espresso Dark Blue / Slate

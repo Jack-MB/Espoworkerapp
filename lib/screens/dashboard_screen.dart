@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 
 import '../core/constants.dart';
+import '../core/server_config.dart';
 import '../services/api_service.dart';
 import '../services/secure_storage_service.dart';
 import '../services/sync_queue_service.dart';
@@ -18,7 +19,6 @@ import 'urlaub_screen.dart';
 import 'krankentage_screen.dart';
 import 'document_list_screen.dart';
 import 'login_screen.dart';
-import 'angestellte_list_screen.dart';
 import 'angestellte_profile_screen.dart';
 import 'notifications_screen.dart';
 import 'abwesenheit_screen.dart';
@@ -1131,7 +1131,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           child: ClipOval(
                             child: (_angestellte?.rawData['mitarbeiterfotoId'] != null && _authToken != null)
                                 ? Image.network(
-                                    '${AppConstants.apiUrl}/Attachment/file/${_angestellte?.rawData['mitarbeiterfotoId']}',
+                                    '${ServerConfig().apiUrl}/Attachment/file/${_angestellte?.rawData['mitarbeiterfotoId']}',
                                     headers: _authToken!.startsWith('ApiKey ') 
                                         ? {'X-Api-Key': _authToken!.split(' ')[1]} 
                                         : {'Authorization': _authToken!},

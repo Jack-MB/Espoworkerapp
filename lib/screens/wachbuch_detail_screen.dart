@@ -6,7 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../models/wachbuch.dart';
 import '../models/note.dart';
 import '../services/api_service.dart';
-import '../core/constants.dart';
+import '../core/server_config.dart';
 import '../services/secure_storage_service.dart';
 import '../services/acl_service.dart';
 import 'package:intl/intl.dart';
@@ -361,7 +361,7 @@ class _WachbuchDetailScreenState extends State<WachbuchDetailScreen> {
           runSpacing: 8,
           children: attachments.map((att) {
             final isImage = att.type.startsWith('image/');
-            final fileUrl = '${AppConstants.baseUrl}/?entryPoint=download&id=${att.id}';
+            final fileUrl = '${ServerConfig().baseUrl}/?entryPoint=download&id=${att.id}';
             if (isImage) {
               return GestureDetector(
                 onTap: () => _showAttachment(context, att.name, att.type, fileUrl),
@@ -501,7 +501,7 @@ class _WachbuchDetailScreenState extends State<WachbuchDetailScreen> {
                                 runSpacing: 8,
                                 children: note.attachments.map((att) {
                                   final isImage = att.type.startsWith('image/');
-                                  final fileUrl = '${AppConstants.baseUrl}/?entryPoint=download&id=${att.id}';
+                                  final fileUrl = '${ServerConfig().baseUrl}/?entryPoint=download&id=${att.id}';
                                   if (isImage) {
                                     return GestureDetector(
                                       onTap: () => _showAttachment(context, att.name, att.type, fileUrl),

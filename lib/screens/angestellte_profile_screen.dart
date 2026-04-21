@@ -3,7 +3,7 @@ import '../services/api_service.dart';
 import '../services/secure_storage_service.dart';
 import '../models/angestellte.dart';
 import '../core/angestellte_fields.dart';
-import '../core/constants.dart';
+import '../core/server_config.dart';
 
 class AngestellteProfileScreen extends StatefulWidget {
   final String angestellteId;
@@ -418,7 +418,7 @@ class _AngestellteProfileScreenState extends State<AngestellteProfileScreen> {
                 child: ClipOval(
                   child: fotoId != null && _authToken != null
                       ? Image.network(
-                          '${AppConstants.apiUrl}/Attachment/file/$fotoId',
+                          '${ServerConfig().apiUrl}/Attachment/file/$fotoId',
                           headers: imageHeaders,
                           fit: BoxFit.cover,
                           errorBuilder: (ctx, err, trace) => CircleAvatar(

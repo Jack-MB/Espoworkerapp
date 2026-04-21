@@ -4,23 +4,21 @@ import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'screens/login_screen.dart';
-import 'services/polling_service.dart';
-import 'services/notification_service.dart';
 import 'providers/theme_provider.dart';
 import 'core/app_theme.dart';
 import 'services/acl_service.dart';
-
-import 'package:workmanager/workmanager.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'services/firebase_service.dart';
+import 'core/server_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Load dynamic server URL from secure storage
+  await ServerConfig().init();
+  
   if (!kIsWeb) {
     try {
       /* 
-      // Temporarily disabled to debug startup crash
+      // Temporarily disabled to debug startup crash / iOS compatibility
       // Initialize Firebase via custom service
       await FirebaseService().init();
       
