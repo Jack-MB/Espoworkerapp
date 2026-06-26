@@ -187,7 +187,9 @@ class ApiService {
   }
 
   Future<Slot?> getSlotById(String id) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/$id');
+    final url = Uri.parse(
+        '${ServerConfig().apiUrl}/Slots/$id'
+        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Slot.fromJson(json.decode(response.body));
@@ -216,6 +218,16 @@ class ApiService {
       throw Exception('Server-Fehler: ${response.statusCode}');
     }
     return true;
+  }
+
+  /// Setzt annahmeStatus auf 'Angenommen' für die gegebene Schicht-ID.
+  Future<bool> annehmeSchicht(String slotId) async {
+    return patchSlot(slotId, {'annahmeStatus': 'Angenommen'});
+  }
+
+  /// Setzt annahmeStatus auf 'Abgelehnt' für die gegebene Schicht-ID.
+  Future<bool> ablehneSchicht(String slotId) async {
+    return patchSlot(slotId, {'annahmeStatus': 'Abgelehnt'});
   }
 
   Future<List<Wachbuch>> getWachbuchs() async {
@@ -293,7 +305,7 @@ class ApiService {
         'where[1][value]': endStr,
         'orderBy': 'dateStart',
         'order': 'asc',
-        'select': 'id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer',
+        'select': 'id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus',
       },
     );
 

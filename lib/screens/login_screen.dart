@@ -189,7 +189,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (success) {
       // Refresh ACL status after successful login
-      await AclService().refresh();
+      final acl = AclService();
+      await acl.refresh();
+      
+      // Security check: If this is the admin app, user MUST be admin
+      if (!acl.isAuthorized) {
+        if (mounted) {
+          setState(() {
+            _errorMessage = 'Zugriff verweigert: Diese App-Version ist nur für Administratoren zulässig.';
+          });
+        }
+        return;
+      }
+
       await _secureStorage.savePassword(password);
       
       if (!mounted) return;

@@ -8,7 +8,8 @@ class AclService {
   final SecureStorageService _storage = SecureStorageService();
   Map<String, dynamic>? _aclCache;
   bool _isAdmin = false;
-  static const bool isAdminApp = bool.fromEnvironment('IS_ADMIN_APP', defaultValue: false);
+  static const bool isAdminApp =
+      bool.fromEnvironment('IS_ADMIN_APP', defaultValue: false);
 
   Future<void> init() async {
     _aclCache = await _storage.getAcl();
@@ -21,18 +22,78 @@ class AclService {
     _isAdmin = await _storage.getIsAdmin();
   }
 
+  /// Returns the value of a named permission level (e.g. 'schichtAnnahme').
+  /// EspoCRM sends these as top-level keys like "schichtAnnahmePermission": "yes"|"no"|"not-set"
+  /// Returns 'yes', 'no', 'not-set', or null if not found.
+  String? getPermissionLevel(String permissionName) {
+    if (_isAdmin) return 'yes'; // Admins always have all permissions
+
+    if (_aclCache == null) return null;
+
+    // EspoCRM sends: { "schichtAnnahmePermission": "yes", ... }
+    final key = '${permissionName}Permission';
+    final value = _aclCache![key];
+    if (value != null) return value.toString();
+
+    return null;
+  }
+
+  /// Returns true if the user has the named value-permission set to 'yes'.
+  bool hasValuePermission(String permissionName) {
+    if (_isAdmin) return true;
+    return getPermissionLevel(permissionName) == 'yes';
+  }
+
+  /// Schicht-Annahme: darf der Benutzer Schichten annehmen/ablehnen?
+  bool get canAcceptShifts => hasValuePermission('schichtAnnahme');
+
+  /// Vorplanung: darf der Benutzer den Planungsvorschlag starten?
+  bool get canStartPlanung => hasValuePermission('planungsvorschlag');
+
+  /// EL-Bereinigung: darf der Benutzer EL-Zugriff bereinigen?
+  bool get canCleanupEL => hasValuePermission('einsatzleiterBereinigen');
+
   /// Checks if a user has a specific permission for a scope
   /// [scope] e.g. 'CWachbuch', 'Slots', 'Urlaub'
   /// [permission] e.g. 'read', 'create', 'edit', 'delete'
-  /// Returns true if permission is 'yes' or 'own' (or 'all')
   bool hasPermission(String scope, String permission) {
-    return true; // Reverted for now to ensure visibility
+    if (_isAdmin) return true;
+    if (_aclCache == null) return true; // Fail-open if not loaded yet
+
+    final table = _aclCache!['table'] as Map<String, dynamic>?;
+    if (table == null) return true;
+
+    final scopeData = table[scope];
+    if (scopeData == null) return false;
+
+    final value = scopeData[permission];
+    if (value == null) return false;
+    // 'all', 'own', 'team', 'yes' → has access; 'no', 'false' → no access
+    return value != 'no' && value != false && value != 'false';
   }
 
   /// Special check for field-level permissions if the server provides them
   bool hasFieldPermission(String scope, String field, String permission) {
-    return true; 
+    if (_isAdmin) return true;
+    if (_aclCache == null) return true;
+
+    final fieldTable = _aclCache!['fieldTable'] as Map<String, dynamic>?;
+    if (fieldTable == null) return true;
+
+    final scopeFields = fieldTable[scope] as Map<String, dynamic>?;
+    if (scopeFields == null) return true;
+
+    final fieldData = scopeFields[field] as Map<String, dynamic>?;
+    if (fieldData == null) return true;
+
+    final value = fieldData[permission];
+    return value != 'no' && value != false && value != 'false';
   }
 
-  bool get isAdmin => _isAdmin || isAdminApp;
+  /// Whether the current USER is marked as an admin on the EspoCRM server.
+  bool get isAdmin => _isAdmin;
+
+  /// Whether the user is allowed to use THIS specific app build (Flavor).
+  /// If this is the Admin App build, the user MUST be a server-side admin.
+  bool get isAuthorized => !isAdminApp || _isAdmin;
 }

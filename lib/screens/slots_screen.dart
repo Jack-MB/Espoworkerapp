@@ -1074,6 +1074,52 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
                                                     ),
                                                   ),
+                                                // Annahme-Status Badge
+                                                if (slot.hasAnnahmeStatus) ...[
+                                                  const SizedBox(width: 6),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: slot.isAccepted
+                                                          ? Colors.green.shade100
+                                                          : slot.isRejected
+                                                              ? Colors.red.shade100
+                                                              : Colors.orange.shade100,
+                                                      borderRadius: BorderRadius.circular(8),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        Icon(
+                                                          slot.isAccepted
+                                                              ? Icons.check_circle
+                                                              : slot.isRejected
+                                                                  ? Icons.cancel
+                                                                  : Icons.hourglass_empty,
+                                                          size: 11,
+                                                          color: slot.isAccepted
+                                                              ? Colors.green.shade700
+                                                              : slot.isRejected
+                                                                  ? Colors.red.shade700
+                                                                  : Colors.orange.shade700,
+                                                        ),
+                                                        const SizedBox(width: 3),
+                                                        Text(
+                                                          slot.annahmeStatus!,
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                            fontWeight: FontWeight.w600,
+                                                            color: slot.isAccepted
+                                                                ? Colors.green.shade700
+                                                                : slot.isRejected
+                                                                    ? Colors.red.shade700
+                                                                    : Colors.orange.shade700,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
                                               ],
                                             ),
                                             const SizedBox(height: 6),
@@ -1211,8 +1257,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                   ),
                                                 ],
                                               ),
-                                            ],
-                                            if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty) ...[
+                                                     if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty) ...[
                                               const SizedBox(height: 2),
                                               Row(
                                                 children: [
@@ -1233,6 +1278,42 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                 ],
                                               ),
                                             ],
+                                            // ── Schicht-Annahme Buttons ───────────────────────────
+                                            if (AclService().canAcceptShifts && !slot.isAccepted && !slot.isRejected) ...[
+                                              const SizedBox(height: 8),
+                                              const Divider(height: 1),
+                                              const SizedBox(height: 6),
+                                              Row(
+                                                mainAxisAlignment: MainAxisAlignment.end,
+                                                children: [
+                                                  OutlinedButton.icon(
+                                                    onPressed: () => _ablehneSchicht(slot),
+                                                    icon: const Icon(Icons.close, size: 16, color: Colors.red),
+                                                    label: const Text('Ablehnen', style: TextStyle(color: Colors.red, fontSize: 13)),
+                                                    style: OutlinedButton.styleFrom(
+                                                      side: const BorderSide(color: Colors.red),
+                                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                      minimumSize: Size.zero,
+                                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  ElevatedButton.icon(
+                                                    onPressed: () => _annehmeSchicht(slot),
+                                                    icon: const Icon(Icons.check, size: 16, color: Colors.white),
+                                                    label: const Text('Annehmen', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                                    style: ElevatedButton.styleFrom(
+                                                      backgroundColor: Colors.green,
+                                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                      minimumSize: Size.zero,
+                                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                            // ─────────────────────────────────────────────────────
+                                    ],
                                           ],
                                         ),
                                       ),
@@ -1434,6 +1515,59 @@ class _SlotsScreenState extends State<SlotsScreen> {
         _isLoading = false;
       });
       _loadSlots();
+    }
+  }
+
+  Future<void> _annehmeSchicht(Slot slot) async {
+    try {
+      await _apiService.annehmeSchicht(slot.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Schicht angenommen'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        _loadSlots();
+      }
+    } catch (e) {
+      if (mounted) _showError('Fehler beim Annehmen: $e');
+    }
+  }
+
+  Future<void> _ablehneSchicht(Slot slot) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Schicht ablehnen'),
+        content: Text('Möchtest du die Schicht "${slot.name}" wirklich ablehnen?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Ablehnen', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await _apiService.ablehneSchicht(slot.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ Schicht abgelehnt'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        _loadSlots();
+      }
+    } catch (e) {
+      if (mounted) _showError('Fehler beim Ablehnen: $e');
     }
   }
 

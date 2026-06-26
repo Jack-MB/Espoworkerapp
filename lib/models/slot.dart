@@ -32,6 +32,8 @@ class Slot {
   final String? kleidungAnmerkungen;
   final String? neueobjektkleidung;
   final String? neueobjektkleidunganmerkung;
+  // Schicht-Annahme
+  final String? annahmeStatus; // 'Wartend' | 'Angenommen' | 'Abgelehnt' | null
 
   Slot({
     required this.id,
@@ -67,6 +69,7 @@ class Slot {
     this.kleidungAnmerkungen,
     this.neueobjektkleidung,
     this.neueobjektkleidunganmerkung,
+    this.annahmeStatus,
   });
 
   factory Slot.fromJson(Map<String, dynamic> json) {
@@ -106,6 +109,13 @@ class Slot {
       kleidungAnmerkungen: json['kleidungAnmerkungen']?.toString(),
       neueobjektkleidung: json['neueobjektkleidung']?.toString(),
       neueobjektkleidunganmerkung: json['neueobjektkleidunganmerkung']?.toString(),
+      annahmeStatus: json['annahmeStatus']?.toString(),
     );
   }
+
+  /// Helper to get a color/icon for the current annahmeStatus
+  bool get isPending    => annahmeStatus == 'Wartend';
+  bool get isAccepted   => annahmeStatus == 'Angenommen';
+  bool get isRejected   => annahmeStatus == 'Abgelehnt';
+  bool get hasAnnahmeStatus => annahmeStatus != null && annahmeStatus!.isNotEmpty;
 }
