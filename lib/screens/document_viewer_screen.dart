@@ -1,9 +1,13 @@
-import 'dart:io';
+import 'dart:io' show File;
+import 'dart:typed_data';
+import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/document.dart';
 import '../core/constants.dart';
 import '../core/server_config.dart';
@@ -20,93 +24,105 @@ class DocumentViewerScreen extends StatefulWidget {
 
 class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
   final SecureStorageService _storageService = SecureStorageService();
-  bool _isLoading = false;
-  Map<String, String>? _headers;
-  String? _downloadUrl;
+  bool _isLoading = true;
+  Uint8List? _documentBytes;
+  String _errorMessage = '';
 
   @override
   void initState() {
     super.initState();
-    _prepareHeaders();
+    _fetchDocumentBytes();
   }
 
-  Future<void> _prepareHeaders() async {
-    final token = await _storageService.getToken();
-    
-    final Map<String, String> headers = {};
-    if (token != null) {
-      if (token.startsWith('Basic ')) {
-        headers['Authorization'] = token;
-      } else if (token.startsWith('ApiKey ')) {
-        headers['X-Api-Key'] = token.replaceAll('ApiKey ', '');
-      } else {
-        headers['X-Auth-Token'] = token;
-      }
-    }
-    
-    setState(() {
-      _headers = headers;
-      _downloadUrl = '${ServerConfig().baseUrl}/?entryPoint=download&id=${widget.document.fileId}';
-    });
-  }
-
-  Future<void> _downloadAndOpenFile() async {
-    if (_downloadUrl == null || _headers == null) return;
-    
-    setState(() {
-      _isLoading = true;
-    });
-
+  Future<void> _fetchDocumentBytes() async {
     try {
-      final response = await http.get(Uri.parse(_downloadUrl!), headers: _headers!);
+      final token = await _storageService.getToken();
+      final Map<String, String> headers = {};
+      if (token != null) {
+        if (token.startsWith('Basic ')) {
+          headers['Authorization'] = token;
+        } else if (token.startsWith('ApiKey ')) {
+          headers['X-Api-Key'] = token.replaceAll('ApiKey ', '');
+        } else {
+          headers['X-Auth-Token'] = token;
+        }
+      }
+      
+      final url = '${ServerConfig().baseUrl}/?entryPoint=download&id=${widget.document.fileId}';
+      final response = await http.get(Uri.parse(url), headers: headers);
       
       if (response.statusCode == 200) {
-        final dir = await getTemporaryDirectory();
-        
-        var fileName = widget.document.fileName ?? "document";
-        if (!fileName.contains('.')) {
-          if (widget.document.type == 'Lohnabrechnung' || widget.document.type == 'SV-Meldung' || widget.document.type == 'Lohnsteuerbescheinigung') {
-            fileName += '.pdf';
-          }
-        }
-        
-        final file = File('${dir.path}/$fileName');
-        await file.writeAsBytes(response.bodyBytes);
-        
-        await OpenFilex.open(file.path);
+        setState(() {
+          _documentBytes = response.bodyBytes;
+          _isLoading = false;
+        });
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Download fehlgeschlagen.')),
-        );
+        setState(() {
+          _errorMessage = 'Fehler beim Laden (Status: ${response.statusCode})';
+          _isLoading = false;
+        });
       }
     } catch (e) {
-      print(e);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Fehler beim Öffnen der Datei.')),
-      );
-    } finally {
       setState(() {
+        _errorMessage = 'Verbindungsfehler: $e';
         _isLoading = false;
       });
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_headers == null || _downloadUrl == null) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.document.name)),
-        body: const Center(child: CircularProgressIndicator()),
-      );
+  Future<void> _downloadAndOpenFile() async {
+    if (_documentBytes == null) return;
+    
+    var fileName = widget.document.fileName ?? "document";
+    if (!fileName.contains('.')) {
+      if (widget.document.type == 'Lohnabrechnung' || widget.document.type == 'SV-Meldung' || widget.document.type == 'Lohnsteuerbescheinigung') {
+        fileName += '.pdf';
+      } else {
+        fileName += '.pdf'; // Default fallback just in case
+      }
     }
 
+    if (kIsWeb) {
+      // On Web, use url_launcher with a data URI to trigger a download or open
+      try {
+        final ext = fileName.split('.').last.toLowerCase();
+        String mimeType = 'application/octet-stream';
+        if (ext == 'pdf') mimeType = 'application/pdf';
+        if (ext == 'png') mimeType = 'image/png';
+        if (ext == 'jpg' || ext == 'jpeg') mimeType = 'image/jpeg';
+        
+        final base64str = base64Encode(_documentBytes!);
+        final uri = Uri.parse('data:$mimeType;base64,$base64str');
+        await launchUrl(uri);
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Download im Browser fehlgeschlagen.')),
+        );
+      }
+      return;
+    }
+
+    // Mobile platforms
+    try {
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/$fileName');
+      await file.writeAsBytes(_documentBytes!);
+      
+      await OpenFilex.open(file.path);
+    } catch (e) {
+      print(e);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fehler beim Öffnen/Speichern der Datei.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     var ext = widget.document.fileName?.toLowerCase() ?? '';
     if (ext.isEmpty || !ext.contains('.')) {
-       if (widget.document.type == 'Lohnabrechnung' || widget.document.type == 'SV-Meldung' || widget.document.type == 'Lohnsteuerbescheinigung') {
-           ext = '.pdf';
-       }
+       ext = '.pdf'; // Default fallback for rendering logic
     }
-    
     final isPdf = ext.endsWith('.pdf');
     final isImage = ext.endsWith('.jpg') || ext.endsWith('.jpeg') || ext.endsWith('.png');
 
@@ -116,43 +132,42 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
         backgroundColor: Theme.of(context).appBarTheme.backgroundColor ?? AppConstants.primaryColor,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.download),
-            onPressed: _downloadAndOpenFile,
-          ),
+          if (!_isLoading && _documentBytes != null)
+            IconButton(
+              icon: const Icon(Icons.download),
+              onPressed: _downloadAndOpenFile,
+            ),
         ],
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator())
-        : (isPdf
-            ? SfPdfViewer.network(
-                _downloadUrl!,
-                headers: _headers,
-              )
-            : (isImage
-                ? Center(
-                    child: InteractiveViewer(
-                      child: Image.network(
-                        _downloadUrl!,
-                        headers: _headers,
-                      ),
-                    ),
-                  )
-                : Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.insert_drive_file, size: 80, color: Colors.grey),
-                        const SizedBox(height: 16),
-                        Text('Dateityp/Endung: $ext'),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: _downloadAndOpenFile,
-                          child: const Text('Mit nativer App öffnen / Speichern'),
-                        ),
-                      ],
-                    ),
-                  ))),
+        : _errorMessage.isNotEmpty
+            ? Center(child: Text(_errorMessage, style: const TextStyle(color: Colors.red)))
+            : _documentBytes == null 
+                ? const Center(child: Text('Leeres Dokument.'))
+                : (isPdf
+                    ? SfPdfViewer.memory(_documentBytes!)
+                    : (isImage
+                        ? Center(
+                            child: InteractiveViewer(
+                              child: Image.memory(_documentBytes!),
+                            ),
+                          )
+                        : Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.insert_drive_file, size: 80, color: Colors.grey),
+                                const SizedBox(height: 16),
+                                Text('Dateityp/Endung: $ext'),
+                                const SizedBox(height: 16),
+                                ElevatedButton(
+                                  onPressed: _downloadAndOpenFile,
+                                  child: const Text('Speichern / Öffnen'),
+                                ),
+                              ],
+                            ),
+                          ))),
     );
   }
 }
