@@ -12,6 +12,7 @@ import '../models/document.dart';
 import '../core/constants.dart';
 import '../core/server_config.dart';
 import '../services/secure_storage_service.dart';
+import '../utils/file_download.dart';
 
 class DocumentViewerScreen extends StatefulWidget {
   final EspoDocument document;
@@ -83,7 +84,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
     }
 
     if (kIsWeb) {
-      // On Web, use url_launcher with a data URI to trigger a download or open
+      // On Web, use our custom dart:html implementation to trigger a real download
       try {
         final ext = fileName.split('.').last.toLowerCase();
         String mimeType = 'application/octet-stream';
@@ -91,9 +92,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
         if (ext == 'png') mimeType = 'image/png';
         if (ext == 'jpg' || ext == 'jpeg') mimeType = 'image/jpeg';
         
-        final base64str = base64Encode(_documentBytes!);
-        final uri = Uri.parse('data:$mimeType;base64,$base64str');
-        await launchUrl(uri);
+        await downloadFileWeb(_documentBytes!, fileName, mimeType);
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Download im Browser fehlgeschlagen.')),
