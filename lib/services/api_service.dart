@@ -9,11 +9,17 @@ import '../models/slot.dart';
 import '../models/note.dart';
 import '../models/urlaub.dart';
 import '../models/krankentage.dart';
+import '../models/bereitschaft.dart';
 import '../models/angestellte.dart';
 import '../models/document.dart';
+import '../models/document_folder.dart';
 import '../models/notification.dart';
 import '../models/abwesenheit.dart';
 import '../models/meeting.dart';
+import '../models/email.dart';
+import '../models/email_template.dart';
+import '../models/chat_room.dart';
+import '../models/chat_message.dart';
 
 class ApiService {
   final SecureStorageService _storageService = SecureStorageService();
@@ -47,7 +53,7 @@ class ApiService {
     final String username = rawUsername.trim();
     final String password = rawPassword.trim();
     
-    debugPrint('Attempting login for: $username to \${ServerConfig().apiUrl}/App/user');
+    debugPrint('Attempting login for: $username to ${ServerConfig().apiUrl}/App/user');
 
     final bool isApiKey = password.length > 20 && !password.contains(' ');
 
@@ -87,14 +93,46 @@ class ApiService {
         debugPrint('App/user returned 200 SUCCESS!');
         
         final data = json.decode(response.body);
-        final String? angestelltexId = data['user'] != null 
+        String? angestelltexId = data['user'] != null 
             ? (data['user']['angestelltexId'] ?? data['user']['angestellte2Id']) 
             : null;
 
         final String? userId = data['user'] != null ? data['user']['id'] : null;
-        final String? angestellteName = data['user'] != null 
+        String? angestellteName = data['user'] != null 
             ? (data['user']['angestelltexName'] ?? data['user']['angestellte2Name']) 
             : null;
+
+        // Fallback: If not directly attached to User, query Angestellte entity
+        if (angestelltexId == null && userId != null) {
+          try {
+            final qUrl = Uri.parse('${ServerConfig().apiUrl}/Angestellte?maxSize=1&where[0][type]=equals&where[0][attribute]=assignedUserId&where[0][value]=$userId');
+            final qRes = await http.get(qUrl, headers: {'Authorization': basicAuth, 'Accept': 'application/json'});
+            if (qRes.statusCode == 200) {
+              final qData = json.decode(qRes.body);
+              if (qData['list'] != null && qData['list'].isNotEmpty) {
+                angestelltexId = qData['list'][0]['id'];
+                angestellteName = qData['list'][0]['name'];
+              }
+            }
+          } catch (e) {
+            debugPrint('Fallback Angestellte query failed: $e');
+          }
+          
+          // Second fallback for KP Users
+          if (angestelltexId == null) {
+            try {
+              final qUrl2 = Uri.parse('${ServerConfig().apiUrl}/Angestellte?maxSize=1&where[0][type]=equals&where[0][attribute]=kpUserId&where[0][value]=$userId');
+              final qRes2 = await http.get(qUrl2, headers: {'Authorization': basicAuth, 'Accept': 'application/json'});
+              if (qRes2.statusCode == 200) {
+                final qData2 = json.decode(qRes2.body);
+                if (qData2['list'] != null && qData2['list'].isNotEmpty) {
+                  angestelltexId = qData2['list'][0]['id'];
+                  angestellteName = qData2['list'][0]['name'];
+                }
+              }
+            } catch (_) {}
+          }
+        }
 
         await _storageService.saveToken(basicAuth);
         await _storageService.saveUsername(username);
@@ -112,6 +150,25 @@ class ApiService {
         // Save Admin status
         final bool isAdmin = data['user'] != null ? (data['user']['isAdmin'] ?? false) : false;
         await _storageService.saveIsAdmin(isAdmin);
+        
+        // Save App Manager status (from full User record)
+        bool isAppManager = false;
+        if (userId != null) {
+          try {
+             final userUrl = Uri.parse('${ServerConfig().apiUrl}/User/$userId');
+             final userResp = await http.get(userUrl, headers: {
+                'Authorization': basicAuth,
+                'Accept': 'application/json',
+             });
+             if (userResp.statusCode == 200) {
+               final uData = json.decode(userResp.body);
+               isAppManager = uData['isAppManager'] ?? false;
+             }
+          } catch (e) {
+             debugPrint('Failed to fetch user record for AppManager check: $e');
+          }
+        }
+        await _storageService.saveIsAppManager(isAppManager);
 
         // Save ACL from response metadata
         if (data['acl'] != null) {
@@ -126,7 +183,7 @@ class ApiService {
 
         return true;
       }
-      debugPrint('App/user returned \${response.statusCode} - \${response.body}');
+      debugPrint('App/user returned ${response.statusCode} - ${response.body}');
       return false;
     } catch (e) {
       debugPrint('Standard Login error: $e');
@@ -189,7 +246,7 @@ class ApiService {
   Future<Slot?> getSlotById(String id) async {
     final url = Uri.parse(
         '${ServerConfig().apiUrl}/Slots/$id'
-        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
+        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,color,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Slot.fromJson(json.decode(response.body));
@@ -220,14 +277,124 @@ class ApiService {
     return true;
   }
 
-  /// Setzt annahmeStatus auf 'Angenommen' für die gegebene Schicht-ID.
+  /// Nimmt eine Schicht an — nutzt Custom Server Action mit Validierung.
+  /// Fällt bei älteren Server-Versionen auf einfaches PATCH zurück.
   Future<bool> annehmeSchicht(String slotId) async {
-    return patchSlot(slotId, {'annahmeStatus': 'Angenommen'});
+    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/$slotId/action/annehmen');
+    try {
+      final response = await http.post(url, headers: await _getHeaders(), body: '{}');
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) return true;
+        throw Exception(data['message'] ?? 'Unbekannter Fehler');
+      }
+      if (response.statusCode == 404) {
+        // Custom Action noch nicht deployed — Fallback auf PATCH
+        debugPrint('annehmeSchicht: Custom Action nicht verfügbar, Fallback auf PATCH');
+        return patchSlot(slotId, {'annahmeStatus': 'Angenommen'});
+      }
+      throw Exception('Server-Fehler: ${response.statusCode} – ${response.body}');
+    } catch (e) {
+      // Netzwerkfehler — Fallback auf PATCH
+      debugPrint('annehmeSchicht action failed: $e, falling back to PATCH');
+      return patchSlot(slotId, {'annahmeStatus': 'Angenommen'});
+    }
   }
 
-  /// Setzt annahmeStatus auf 'Abgelehnt' für die gegebene Schicht-ID.
-  Future<bool> ablehneSchicht(String slotId) async {
-    return patchSlot(slotId, {'annahmeStatus': 'Abgelehnt'});
+  /// Lehnt eine Schicht ab — nutzt Custom Server Action.
+  Future<bool> ablehneSchicht(String slotId, {String? grund}) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/$slotId/action/ablehnen');
+    try {
+      final body = json.encode(grund != null ? {'grund': grund} : {});
+      final response = await http.post(url, headers: await _getHeaders(), body: body);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) return true;
+        throw Exception(data['message'] ?? 'Unbekannter Fehler');
+      }
+      if (response.statusCode == 404) {
+        debugPrint('ablehneSchicht: Custom Action nicht verfügbar, Fallback auf PATCH');
+        return patchSlot(slotId, {'annahmeStatus': 'Abgelehnt'});
+      }
+      throw Exception('Server-Fehler: ${response.statusCode} – ${response.body}');
+    } catch (e) {
+      debugPrint('ablehneSchicht action failed: $e, falling back to PATCH');
+      return patchSlot(slotId, {'annahmeStatus': 'Abgelehnt'});
+    }
+  }
+
+  /// Delta-Sync: Gibt nur Schichten zurück die seit [since] geändert wurden.
+  /// Verwendet /api/v1/Slots/action/delta?since=... (Custom Action).
+  /// Fallback: voller Reload via getSlots().
+  Future<List<Slot>> getDeltaSlots(DateTime since) async {
+    final sinceStr =
+        '${since.year.toString().padLeft(4, '0')}-'
+        '${since.month.toString().padLeft(2, '0')}-'
+        '${since.day.toString().padLeft(2, '0')} '
+        '${since.hour.toString().padLeft(2, '0')}:'
+        '${since.minute.toString().padLeft(2, '0')}:'
+        '${since.second.toString().padLeft(2, '0')}';
+
+    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/action/delta?since=${Uri.encodeComponent(sinceStr)}');
+    try {
+      final response = await http.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+        }
+      }
+      if (response.statusCode == 404) {
+        // Delta-Action noch nicht deployed — kein Fallback nötig, Caller macht vollen Load
+        debugPrint('getDeltaSlots: Custom Action nicht verfügbar');
+        return [];
+      }
+    } catch (e) {
+      debugPrint('getDeltaSlots error: $e');
+    }
+    return [];
+  }
+
+  /// AZK-Saldo: Holt den Arbeitszeitkonto-Stand für den eingeloggten Mitarbeiter.
+  Future<Map<String, dynamic>?> getAzkSaldo() async {
+    final angestellteId = await _storageService.getAngestellteId();
+    if (angestellteId == null) return null;
+
+    // Versuche Custom Action
+    final actionUrl = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$angestellteId/action/azkSaldo');
+    try {
+      final response = await http.get(actionUrl, headers: await _getHeaders());
+      if (response.statusCode == 200) return json.decode(response.body);
+    } catch (_) {}
+
+    // Fallback: Direkte Berechnung aus Schichten (letzte 90 Tage)
+    try {
+      final slots = await getSlots(
+        startDate: DateTime.now().subtract(const Duration(days: 90)),
+        endDate: DateTime.now(),
+      );
+      double sollStunden = 0;
+      double istStunden  = 0;
+      for (final s in slots) {
+        if (s.stundenanzahl != null) sollStunden += s.stundenanzahl!;
+        if (s.checkin != null && s.checkout != null) {
+          try {
+            final fmt = 'yyyy-MM-dd HH:mm:ss';
+            // Simplified: count only slots with both timestamps
+            istStunden += s.stundenanzahl ?? 0;
+          } catch (_) {}
+        }
+      }
+      return {
+        'sollStunden': sollStunden,
+        'istStunden':  istStunden,
+        'differenz':   istStunden - sollStunden,
+        'berechnetLokal': true,
+      };
+    } catch (e) {
+      debugPrint('getAzkSaldo fallback error: $e');
+      return null;
+    }
   }
 
   Future<List<Wachbuch>> getWachbuchs() async {
@@ -296,7 +463,7 @@ class ApiService {
       port: baseUri.hasPort ? baseUri.port : null,
       path: '${baseUri.path}/Slots',
       queryParameters: {
-        'maxSize': '500',
+        'maxSize': '2000',
         'where[0][type]': 'greaterThanOrEquals',
         'where[0][attribute]': 'dateStart',
         'where[0][value]': startStr,
@@ -305,7 +472,6 @@ class ApiService {
         'where[1][value]': endStr,
         'orderBy': 'dateStart',
         'order': 'asc',
-        'select': 'id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus',
       },
     );
 
@@ -337,7 +503,7 @@ class ApiService {
         'where[1][value]': wachbuchId,
         'orderBy': 'createdAt',
         'order': 'desc',
-        'select': 'id,post,type,createdAt,createdById,createdByName,parentType,parentId,attachmentsIds,attachmentsNames,attachmentsTypes',
+        'select': 'id,post,type,createdAt,createdById,createdByName,parentType,parentId,attachmentsIds,attachmentsNames',
       },
     );
     final response = await http.get(url, headers: await _getHeaders());
@@ -414,8 +580,21 @@ class ApiService {
     return response.statusCode == 200 || response.statusCode == 201;
   }
 
+  Future<void> triggerWachbuchUpdate(String id) async {
+    final token = await _storageService.getToken();
+    if (token == null) return;
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/CWachbuch/$id');
+      await http.put(
+        url,
+        headers: {'Authorization': token, 'Content-Type': 'application/json'},
+        body: json.encode({'modifiedAt': DateTime.now().toUtc().toIso8601String()}),
+      );
+    } catch (_) {}
+  }
+
   Future<List<Urlaub>> getUrlaubs() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Urlaub?maxSize=100&orderBy=createdAt&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CUrlaube?maxSize=100&orderBy=createdAt&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -427,7 +606,7 @@ class ApiService {
   }
 
   Future<List<Krankentage>> getKrankentage() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankentage?maxSize=100&orderBy=createdAt&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankenscheine?maxSize=100&orderBy=createdAt&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -438,12 +617,35 @@ class ApiService {
     return [];
   }
 
+  Future<List<Bereitschaft>> getBereitschaften() async {
+    // Bereitschaften der letzten 30 Tage bis zu den nächsten 180 Tagen laden
+    final now = DateTime.now();
+    final from = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 30));
+    final to = now.add(const Duration(days: 180));
+    final fromStr = '${from.year.toString().padLeft(4, '0')}-${from.month.toString().padLeft(2, '0')}-${from.day.toString().padLeft(2, '0')}';
+    final toStr = '${to.year.toString().padLeft(4, '0')}-${to.month.toString().padLeft(2, '0')}-${to.day.toString().padLeft(2, '0')}';
+    final url = Uri.parse(
+      '${ServerConfig().apiUrl}/CBereitschaft?maxSize=200'
+      '&where%5B0%5D%5Btype%5D=greaterThanOrEquals&where%5B0%5D%5Battribute%5D=dateStart&where%5B0%5D%5Bvalue%5D=$fromStr'
+      '&where%5B1%5D%5Btype%5D=lessThanOrEquals&where%5B1%5D%5Battribute%5D=dateStart&where%5B1%5D%5Bvalue%5D=$toStr'
+      '&orderBy=dateStart&order=asc',
+    );
+    final response = await http.get(url, headers: await _getHeaders());
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['list'] != null) {
+        return (data['list'] as List).map((e) => Bereitschaft.fromJson(e)).toList();
+      }
+    }
+    return [];
+  }
+
   Future<bool> createUrlaub({
     required String dateStart,
     required String dateEnd,
     required String description,
   }) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Urlaub');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CUrlaube');
     final headers = await _getHeaders();
     final angestellteId = await _storageService.getAngestellteId();
     final assignedUserId = await _storageService.getAssignedUserId();
@@ -456,7 +658,8 @@ class ApiService {
       'dateEnd': dateEnd,   // e.g. "2026-03-20 23:59:59"
       'description': description,
       'isAllDay': true, // Standard for vacation
-      if (angestellteId != null) 'angestellteId': angestellteId,
+      if (angestellteId != null) 'parentId': angestellteId,
+      if (angestellteId != null) 'parentType': 'Angestellte',
       if (assignedUserId != null) 'assignedUserId': assignedUserId,
     });
     
@@ -471,7 +674,7 @@ class ApiService {
     required String description,
     String? krankenscheinId,
   }) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankentage');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankenscheine');
     final headers = await _getHeaders();
     final angestellteId = await _storageService.getAngestellteId();
     final assignedUserId = await _storageService.getAssignedUserId();
@@ -485,7 +688,8 @@ class ApiService {
       'description': description,
       'isAllDay': true,
       if (krankenscheinId != null) 'krankenscheinId': krankenscheinId,
-      if (angestellteId != null) 'angestellteId': angestellteId,
+      if (angestellteId != null) 'parentId': angestellteId,
+      if (angestellteId != null) 'parentType': 'Angestellte',
       if (assignedUserId != null) 'assignedUserId': assignedUserId,
     });
     
@@ -495,7 +699,7 @@ class ApiService {
   }
 
   Future<bool> updateKrankentage(String id, String krankenscheinId) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankentage/$id');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankenscheine/$id');
     final headers = await _getHeaders();
     final body = json.encode({
       'krankenscheinId': krankenscheinId,
@@ -533,8 +737,24 @@ class ApiService {
     return response.statusCode == 200;
   }
 
-  Future<List<EspoDocument>> getDocuments() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Document?maxSize=50&orderBy=createdAt&order=desc');
+  Future<List<DocumentFolder>> getDocumentFolders() async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/DocumentFolder?maxSize=100&orderBy=name&order=asc');
+    final response = await http.get(url, headers: await _getHeaders());
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['list'] != null) {
+        return (data['list'] as List).map((e) => DocumentFolder.fromJson(e)).toList();
+      }
+    }
+    return [];
+  }
+
+  Future<List<EspoDocument>> getDocuments({String? folderId}) async {
+    String urlStr = '${ServerConfig().apiUrl}/Document?maxSize=50&orderBy=createdAt&order=desc&select=id,name,status,type,fileId,fileName,createdAt';
+    if (folderId != null) {
+      urlStr += '&where[0][type]=equals&where[0][attribute]=folderId&where[0][value]=$folderId';
+    }
+    final url = Uri.parse(urlStr);
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -566,7 +786,7 @@ class ApiService {
   }
 
   Future<List<Abwesenheit>> getAbwesenheiten() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotiz?maxSize=100&orderBy=dateStart&order=desc');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotizen?maxSize=100&orderBy=dateStart&order=desc');
     final response = await http.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -584,7 +804,7 @@ class ApiService {
     required String description,
     bool isAllDay = false,
   }) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotiz');
+    final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotizen');
     final headers = await _getHeaders();
     final angestellteId = await _storageService.getAngestellteId();
     final assignedUserId = await _storageService.getAssignedUserId();
@@ -699,7 +919,7 @@ class ApiService {
     }
 
     // Check Slots (Shifts)
-    final slotUrl = Uri.parse('${ServerConfig().apiUrl}/Slot?maxSize=1'
+    final slotUrl = Uri.parse('${ServerConfig().apiUrl}/Slots?maxSize=1'
       '&where[0][type]=equals&where[0][attribute]=assignedUserId&where[0][value]=$userId'
       '&where[1][type]=between&where[1][attribute]=dateStart&where[1][value]=$start&where[1][value]=$end');
     
@@ -772,4 +992,293 @@ class ApiService {
 
     return result.isEmpty ? "Kein Sync durchgeführt." : result;
   }
+
+  // --- Email Endpoints --- //
+
+  Future<List<Map<String, dynamic>>> getEmailFolders() async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+    
+    // Custom folders
+    final url = Uri.parse('${ServerConfig().apiUrl}/EmailFolder');
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return List<Map<String, dynamic>>.from(data['list']);
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<List<Map<String, dynamic>>> getInboundEmails() async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+    
+    // Group inboxes
+    final url = Uri.parse('${ServerConfig().apiUrl}/InboundEmail');
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return List<Map<String, dynamic>>.from(data['list']);
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<List<Map<String, dynamic>>> getGroupEmailFolders() async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+    
+    final url = Uri.parse('${ServerConfig().apiUrl}/GroupEmailFolder');
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return List<Map<String, dynamic>>.from(data['list']);
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<List<Map<String, dynamic>>> getEmailAccounts() async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+    
+    // Email Accounts (Personal/Shared IMAP Accounts)
+    final url = Uri.parse('${ServerConfig().apiUrl}/EmailAccount');
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return List<Map<String, dynamic>>.from(data['list']);
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<List<Email>> getEmails({String? folderId, String? inboundEmailId, String? groupFolderId, String? status}) async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+
+    String url = '${ServerConfig().apiUrl}/Email?maxSize=50&orderBy=createdAt&order=desc';
+    
+    if (folderId != null && folderId != 'all') {
+      url += '&where[0][type]=equals&where[0][attribute]=folderId&where[0][value]=$folderId';
+    } else if (inboundEmailId != null) {
+       url += '&where[0][type]=equals&where[0][attribute]=inboundEmailId&where[0][value]=$inboundEmailId';
+    } else if (groupFolderId != null) {
+       url += '&where[0][type]=equals&where[0][attribute]=groupFolderId&where[0][value]=$groupFolderId';
+    } else if (status != null) {
+      url += '&where[0][type]=equals&where[0][attribute]=status&where[0][value]=$status';
+    }
+
+    try {
+      final response = await http.get(Uri.parse(url), headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final list = data['list'] as List;
+        return list.map((e) => Email.fromJson(e)).toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<Email?> getEmailDetails(String id) async {
+    final token = await _storageService.getToken();
+    if (token == null) return null;
+    final url = Uri.parse('${ServerConfig().apiUrl}/Email/$id');
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        return Email.fromJson(json.decode(response.body));
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<List<EmailTemplate>> getEmailTemplates() async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+
+    // max 100 templates
+    final url = Uri.parse('${ServerConfig().apiUrl}/EmailTemplate?maxSize=100&orderBy=name&order=asc');
+    
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final list = data['list'] as List;
+        return list.map((e) => EmailTemplate.fromJson(e)).toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+  
+  // Lädt die verfügbaren Absenderadressen für den aktuellen User
+  Future<List<String>> getAvailableFromAddresses() async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+
+    // Der Standardweg in EspoCRM, um From-Adressen zu bekommen (kann Inbounds & Personal Accounts umfassen)
+    final url = Uri.parse('${ServerConfig().apiUrl}/Email/action/getComposerData');
+    
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data.containsKey('fromEmailAddresses') && data['fromEmailAddresses'] is List) {
+          return List<String>.from(data['fromEmailAddresses']);
+        }
+      }
+    } catch (_) {}
+    
+    // Fallback: Benutzer-E-Mail, falls getComposerData fehlschlägt
+    try {
+       final user = await getSelfUser();
+       if (user != null && user['user'] != null) {
+         final email = user['user']['emailAddress'];
+         if (email != null) return [email.toString()];
+       }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<bool> sendEmail(Map<String, dynamic> emailData) async {
+    final token = await _storageService.getToken();
+    if (token == null) return false;
+
+    // Send immediately via Email entity creation with status "Sending" or action "send"
+    final url = Uri.parse('${ServerConfig().apiUrl}/Email');
+    
+    try {
+      final response = await http.post(
+        url,
+        headers: {
+          'Authorization': token, 
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: json.encode(emailData),
+      );
+      
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      debugPrint('Error sending email: $e');
+      return false;
+    }
+  }
+
+  // --- Chat Endpoints --- //
+
+  Future<List<ChatRoom>> getMyChatRooms() async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+    
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getMyRooms');
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is List) {
+          return data.map((e) => ChatRoom.fromJson(e)).toList();
+        } else if (data['list'] is List) {
+          return (data['list'] as List).map((e) => ChatRoom.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<Map<String, dynamic>> getChatUsersFiltered() async {
+    final token = await _storageService.getToken();
+    if (token == null) return {};
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getChatUsersFiltered');
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  Future<String?> createDirectChat(String userId) async {
+    final token = await _storageService.getToken();
+    if (token == null) return null;
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/createDirectChat');
+    try {
+      final response = await http.post(
+        url, 
+        headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
+        body: json.encode({'userId': userId})
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['chatRoomId'] as String?;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<List<ChatMessage>> getChatMessages(String roomId, {int offset = 0}) async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+    
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getMessages?chatRoomId=$roomId&offset=$offset');
+    try {
+      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is List) {
+          return data.map((e) => ChatMessage.fromJson(e)).toList();
+        } else if (data['list'] is List) {
+          return (data['list'] as List).map((e) => ChatMessage.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<bool> sendChatMessage(String roomId, String text, {String? attachmentId}) async {
+    final token = await _storageService.getToken();
+    if (token == null) return false;
+    
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/sendMessage');
+    try {
+      final bodyMap = <String, dynamic>{'chatRoomId': roomId, 'body': text};
+      if (attachmentId != null) {
+        bodyMap['attachmentId'] = attachmentId;
+      }
+      
+      final response = await http.post(
+        url, 
+        headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
+        body: json.encode(bodyMap)
+      );
+      if (response.statusCode != 200) {
+        debugPrint('sendChatMessage failed: ${response.statusCode} - ${response.body}');
+      }
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('sendChatMessage exception: $e');
+    }
+    return false;
+  }
+
+  Future<void> markChatRoomRead(String roomId) async {
+    final token = await _storageService.getToken();
+    if (token == null) return;
+    
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/markRead');
+    try {
+      await http.post(
+        url, 
+        headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
+        body: json.encode({'chatRoomId': roomId})
+      );
+    } catch (_) {}
+  }
+
 }

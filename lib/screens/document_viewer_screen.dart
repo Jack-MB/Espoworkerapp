@@ -62,7 +62,15 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
       
       if (response.statusCode == 200) {
         final dir = await getTemporaryDirectory();
-        final file = File('${dir.path}/${widget.document.fileName ?? "document"}');
+        
+        var fileName = widget.document.fileName ?? "document";
+        if (!fileName.contains('.')) {
+          if (widget.document.type == 'Lohnabrechnung' || widget.document.type == 'SV-Meldung' || widget.document.type == 'Lohnsteuerbescheinigung') {
+            fileName += '.pdf';
+          }
+        }
+        
+        final file = File('${dir.path}/$fileName');
         await file.writeAsBytes(response.bodyBytes);
         
         await OpenFilex.open(file.path);
@@ -92,7 +100,13 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
       );
     }
 
-    final ext = widget.document.fileName?.toLowerCase() ?? '';
+    var ext = widget.document.fileName?.toLowerCase() ?? '';
+    if (ext.isEmpty || !ext.contains('.')) {
+       if (widget.document.type == 'Lohnabrechnung' || widget.document.type == 'SV-Meldung' || widget.document.type == 'Lohnsteuerbescheinigung') {
+           ext = '.pdf';
+       }
+    }
+    
     final isPdf = ext.endsWith('.pdf');
     final isImage = ext.endsWith('.jpg') || ext.endsWith('.jpeg') || ext.endsWith('.png');
 
