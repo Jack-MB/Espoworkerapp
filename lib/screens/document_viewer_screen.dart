@@ -13,6 +13,7 @@ import '../core/constants.dart';
 import '../core/server_config.dart';
 import '../services/secure_storage_service.dart';
 import '../utils/file_download.dart';
+import '../utils/native_web_pdf_viewer.dart';
 
 class DocumentViewerScreen extends StatefulWidget {
   final EspoDocument document;
@@ -170,7 +171,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
             : _documentBytes == null 
                 ? const Center(child: Text('Leeres Dokument.'))
                 : (isPdf
-                    ? SfPdfViewer.memory(_documentBytes!)
+                    ? (kIsWeb ? NativeWebPdfViewer(bytes: _documentBytes!) : SfPdfViewer.memory(_documentBytes!))
                     : (isImage
                         ? Center(
                             child: InteractiveViewer(
