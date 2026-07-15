@@ -131,9 +131,34 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
         backgroundColor: Theme.of(context).appBarTheme.backgroundColor ?? AppConstants.primaryColor,
         foregroundColor: Colors.white,
         actions: [
+          if (kIsWeb && !_isLoading && _documentBytes != null)
+            IconButton(
+              icon: const Icon(Icons.open_in_browser),
+              tooltip: 'Im Browser öffnen',
+              onPressed: () async {
+                var fileName = widget.document.fileName ?? "document";
+                if (!fileName.contains('.')) {
+                  fileName += '.pdf';
+                }
+                final ext = fileName.split('.').last.toLowerCase();
+                String mimeType = 'application/octet-stream';
+                if (ext == 'pdf') mimeType = 'application/pdf';
+                if (ext == 'png') mimeType = 'image/png';
+                if (ext == 'jpg' || ext == 'jpeg') mimeType = 'image/jpeg';
+                
+                try {
+                  await viewFileWeb(_documentBytes!, mimeType);
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Fehler beim Öffnen im Browser.')),
+                  );
+                }
+              },
+            ),
           if (!_isLoading && _documentBytes != null)
             IconButton(
               icon: const Icon(Icons.download),
+              tooltip: 'Herunterladen / Öffnen',
               onPressed: _downloadAndOpenFile,
             ),
         ],
