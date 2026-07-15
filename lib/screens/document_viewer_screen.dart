@@ -1,7 +1,7 @@
 import 'dart:io' show File;
 import 'dart:typed_data';
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
@@ -13,7 +13,6 @@ import '../core/constants.dart';
 import '../core/server_config.dart';
 import '../services/secure_storage_service.dart';
 import '../utils/file_download.dart';
-import '../utils/native_web_pdf_viewer.dart';
 
 class DocumentViewerScreen extends StatefulWidget {
   final EspoDocument document;
@@ -171,22 +170,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
             : _documentBytes == null 
                 ? const Center(child: Text('Leeres Dokument.'))
                 : (isPdf
-                    ? (kIsWeb 
-                        ? ((defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS)
-                            ? Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: const [
-                                    Icon(Icons.picture_as_pdf, size: 80, color: Colors.grey),
-                                    SizedBox(height: 16),
-                                    Text('PDF-Vorschau im mobilen Browser nicht verfügbar.', textAlign: TextAlign.center),
-                                    SizedBox(height: 8),
-                                    Text('Bitte nutze die Icons oben rechts zum Öffnen.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
-                                  ],
-                                ),
-                              )
-                            : NativeWebPdfViewer(bytes: _documentBytes!))
-                        : SfPdfViewer.memory(_documentBytes!))
+                    ? SfPdfViewer.memory(_documentBytes!)
                     : (isImage
                         ? Center(
                             child: InteractiveViewer(
