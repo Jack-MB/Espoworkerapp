@@ -171,7 +171,22 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
             : _documentBytes == null 
                 ? const Center(child: Text('Leeres Dokument.'))
                 : (isPdf
-                    ? (kIsWeb ? NativeWebPdfViewer(bytes: _documentBytes!) : SfPdfViewer.memory(_documentBytes!))
+                    ? (kIsWeb 
+                        ? ((defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS)
+                            ? Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: const [
+                                    Icon(Icons.picture_as_pdf, size: 80, color: Colors.grey),
+                                    SizedBox(height: 16),
+                                    Text('PDF-Vorschau im mobilen Browser nicht verfügbar.', textAlign: TextAlign.center),
+                                    SizedBox(height: 8),
+                                    Text('Bitte nutze die Icons oben rechts zum Öffnen.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
+                                  ],
+                                ),
+                              )
+                            : NativeWebPdfViewer(bytes: _documentBytes!))
+                        : SfPdfViewer.memory(_documentBytes!))
                     : (isImage
                         ? Center(
                             child: InteractiveViewer(
