@@ -362,11 +362,19 @@ class _SlotsScreenState extends State<SlotsScreen> {
     setState(() {
       _checkedSlotIds = checkedInList.toSet();
       _checkedSlotOutIds = checkedOutList.toSet();
-      if (inTimesJson != null) {
-        _checkedSlotTimes = Map<String, String>.from(json.decode(inTimesJson));
+      try {
+        if (inTimesJson != null && inTimesJson.trim().isNotEmpty) {
+          _checkedSlotTimes = Map<String, String>.from(json.decode(inTimesJson));
+        }
+      } catch (e) {
+        debugPrint('SlotsScreen: Error parsing admin_checked_times: $e');
       }
-      if (outTimesJson != null) {
-        _checkedSlotOutTimes = Map<String, String>.from(json.decode(outTimesJson));
+      try {
+        if (outTimesJson != null && outTimesJson.trim().isNotEmpty) {
+          _checkedSlotOutTimes = Map<String, String>.from(json.decode(outTimesJson));
+        }
+      } catch (e) {
+        debugPrint('SlotsScreen: Error parsing admin_checked_out_times: $e');
       }
     });
   }

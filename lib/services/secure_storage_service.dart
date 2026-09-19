@@ -88,7 +88,7 @@ class SecureStorageService {
 
   Future<Map<String, dynamic>> getAcl() async {
     final data = await _read(_keyAclData);
-    if (data == null) return {};
+    if (data == null || data.trim().isEmpty) return {};
     try {
       return jsonDecode(data) as Map<String, dynamic>;
     } catch (_) {

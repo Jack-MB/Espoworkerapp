@@ -16,8 +16,6 @@ import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/acl_service.dart';
 import '../widgets/push_settings_sheet.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'self_checkin_screen.dart';
 import '../services/location_service.dart';
@@ -326,14 +324,24 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
     // Fall 1: Nativer Mobile-Build (Android & iOS via FCM)
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-      final token = await FirebaseService().requestPermissionAndSyncToken();
-      debugPrint('Native Mobile FCM Token synced on start: $token');
-      final notificationsEnabled = await NotificationService().areNotificationsEnabled();
-      if (mounted) {
-        setState(() {
-          _pushPermission = (token != null && notificationsEnabled) ? 'granted' : 'denied';
-          _showPushBanner = token == null || !notificationsEnabled;
-        });
+      try {
+        final token = await FirebaseService().requestPermissionAndSyncToken();
+        debugPrint('Native Mobile FCM Token synced on start: $token');
+        final notificationsEnabled = await NotificationService().areNotificationsEnabled();
+        if (mounted) {
+          setState(() {
+            _pushPermission = notificationsEnabled ? 'granted' : 'denied';
+            _showPushBanner = !notificationsEnabled;
+          });
+        }
+      } catch (e) {
+        debugPrint('FCM start sync error: $e');
+        if (mounted) {
+          setState(() {
+            _pushPermission = 'denied';
+            _showPushBanner = true;
+          });
+        }
       }
       return;
     }
@@ -386,88 +394,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       onTokenSynced: () {
         _syncFcmTokenOnStart();
       },
-    );
-  }
-
-  void _showPermissionDeniedDialog() {
-    final isAndroid = !kIsWeb && Platform.isAndroid;
-    final isNativeIos = !kIsWeb && Platform.isIOS;
-    final isIosWeb = kIsWeb && WebPushService().isIosDevice();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.settings, color: Theme.of(context).primaryColor, size: 28),
-            const SizedBox(width: 10),
-            const Expanded(child: Text('Mitteilungen freischalten')),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              isAndroid
-                  ? 'Auf deinem Android-Gerät sind Benachrichtigungen deaktiviert. So aktivierst du sie:'
-                  : (isNativeIos
-                      ? 'Auf deinem iPhone sind Mitteilungen für die App deaktiviert. So aktivierst du sie:'
-                      : (isIosWeb
-                          ? 'Auf deinem iPhone sind Mitteilungen für die Web-App deaktiviert. So aktivierst du sie:'
-                          : 'Im Browser wurden Benachrichtigungen blockiert. So schaltest du sie in 10 Sekunden frei:')),
-              style: const TextStyle(fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 14),
-            if (isAndroid) ...[
-              _buildGuideStep('1', 'Öffne die Smartphone-Einstellungen.'),
-              _buildGuideStep('2', 'Wähle "Apps" (oder "App-Management") -> "MB-Worker".'),
-              _buildGuideStep('3', 'Tippe auf "Benachrichtigungen" und schalte "Alle Benachrichtigungen zulassen" ein.'),
-              _buildGuideStep('4', 'Kehre zur MB-Worker App zurück.'),
-            ] else if (isNativeIos) ...[
-              _buildGuideStep('1', 'Öffne die iPhone-Einstellungen.'),
-              _buildGuideStep('2', 'Scrolle nach unten zu "MB-Security" (oder "Mitteilungen").'),
-              _buildGuideStep('3', 'Tippe auf "Mitteilungen" und aktiviere "Mitteilungen erlauben".'),
-              _buildGuideStep('4', 'Kehre zur App zurück.'),
-            ] else if (isIosWeb) ...[
-              _buildGuideStep('1', 'Öffne die iPhone-Einstellungen.'),
-              _buildGuideStep('2', 'Scrolle nach unten zu "Mitteilungen" oder "Safari / MB Worker".'),
-              _buildGuideStep('3', 'Schalte den Schalter "Mitteilungen erlauben" auf EIN.'),
-              _buildGuideStep('4', 'Kehre zur App zurück und wische nach unten.'),
-            ] else ...[
-              _buildGuideStep('1', 'Tippe oben links neben der Webadresse (app.mb-scc.net) auf das Schloss- oder Schieberegler-Symbol.'),
-              _buildGuideStep('2', 'Wähle "Berechtigungen" oder "Website-Einstellungen".'),
-              _buildGuideStep('3', 'Setze "Benachrichtigungen" auf "Zulassen".'),
-              _buildGuideStep('4', 'Lade die Seite einmal neu (nach unten wischen).'),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Verstanden'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGuideStep(String step, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            radius: 11,
-            backgroundColor: Theme.of(context).primaryColor.withOpacity(0.15),
-            child: Text(step, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor)),
-          ),
-          const SizedBox(width: 10),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
-        ],
-      ),
     );
   }
 
@@ -1161,8 +1087,20 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       setState(() {
         _checkedSlotIds = checkedInList.toSet();
         _checkedSlotOutIds = checkedOutList.toSet();
-        if (inTimesJson != null) _checkedSlotTimes = Map<String, String>.from(json.decode(inTimesJson));
-        if (outTimesJson != null) _checkedSlotOutTimes = Map<String, String>.from(json.decode(outTimesJson));
+        try {
+          if (inTimesJson != null && inTimesJson.trim().isNotEmpty) {
+            _checkedSlotTimes = Map<String, String>.from(json.decode(inTimesJson));
+          }
+        } catch (e) {
+          debugPrint('Dashboard: Error parsing admin_checked_times: $e');
+        }
+        try {
+          if (outTimesJson != null && outTimesJson.trim().isNotEmpty) {
+            _checkedSlotOutTimes = Map<String, String>.from(json.decode(outTimesJson));
+          }
+        } catch (e) {
+          debugPrint('Dashboard: Error parsing admin_checked_out_times: $e');
+        }
       });
     }
   }

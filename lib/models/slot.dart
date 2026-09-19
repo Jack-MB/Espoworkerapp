@@ -36,6 +36,10 @@ class Slot {
   // Schicht-Annahme
   final String? annahmeStatus; // 'Wartend' | 'Angenommen' | 'Abgelehnt' | 'Rückgabe_Beantragt' | null
 
+  // Einsatzleiter
+  final String? einsatzleiterId;
+  final String? einsatzleiterName;
+
   Slot({
     required this.id,
     required this.name,
@@ -47,6 +51,8 @@ class Slot {
     this.objekteName,
     this.angestellteId,
     this.angestellteName,
+    this.einsatzleiterId,
+    this.einsatzleiterName,
     this.accountId,
     this.accountName,
     this.salesOrderName,
@@ -86,6 +92,8 @@ class Slot {
       objekteName: json['serviceObjectName'] ?? json['objekteName'],
       angestellteId: json['angestellteId'],
       angestellteName: json['angestellteName'],
+      einsatzleiterId: json['einsatzleiterId'],
+      einsatzleiterName: json['einsatzleiterName'],
       accountId: json['accountId'],
       accountName: json['accountName'],
       salesOrderName: json['salesOrderName'],
@@ -127,4 +135,10 @@ class Slot {
   bool get isRejected   => annahmeStatus == 'Abgelehnt';
   bool get isRueckgabe  => annahmeStatus == 'Rückgabe_Beantragt';
   bool get hasAnnahmeStatus => annahmeStatus != null && annahmeStatus!.isNotEmpty;
+
+  /// Helper: Ist der angegebene Mitarbeiter der Einsatzleiter für diese Schicht?
+  bool isEinsatzleiter(String? currentAngestellteId) {
+    if (currentAngestellteId == null || currentAngestellteId.isEmpty) return false;
+    return einsatzleiterId == currentAngestellteId;
+  }
 }

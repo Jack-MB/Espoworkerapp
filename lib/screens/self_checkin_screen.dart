@@ -11,11 +11,12 @@ import '../services/location_service.dart';
 import '../services/sync_queue_service.dart';
 import '../core/constants.dart';
 
-/// Self-Service Check-In Screen für Mitarbeiter — inspiriert vom stationären Check-in-Terminal.
+/// Self-Service Check-In Screen für Mitarbeiter & Einsatzleiter — inspiriert vom stationären Check-in-Terminal.
 /// Da der Mitarbeiter in der App bereits authentifiziert ist, wird KEIN Barcode-Scanner benötigt.
-/// Der Mitarbeiter sieht direkt seine Schichten für heute und kann mit 1-Tap ein- und auschecken.
+/// Reguläre Mitarbeiter sehen direkt ihre heutigen Schichten.
+/// Einsatzleiter und Admins sehen zudem die Schichten ihres Teams am Einsatzort und können diese vor Ort ein- und auschecken.
 class SelfCheckinScreen extends StatefulWidget {
-  const SelfCheckinScreen({Key? key}) : super(key: key);
+  const SelfCheckinScreen({super.key});
 
   @override
   State<SelfCheckinScreen> createState() => _SelfCheckinScreenState();
@@ -28,25 +29,50 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
   final SyncQueueService _syncQueue = SyncQueueService();
   final SecureStorageService _storage = SecureStorageService();
 
-  List<Slot> _slots = [];
+  final ScrollController _scrollController = ScrollController();
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  List<Slot> _allRelevantSlots = [];
   bool _isLoading = true;
+  bool _isRefreshing = false;
   String? _errorMessage;
   String? _currentAngestellteId;
+
+  // Tabs für Admins & Einsatzleiter: 0 = Meine Schichten, 1 = Einsatzleitung / Team
+  int _selectedTab = 0;
+  String _searchQuery = '';
+
+  // Slot-spezifischer Ladezustand (verhindert globales Layout-Jumping)
+  String? _processingSlotId;
 
   // Lokaler Check-In-Status (gespeichert für nahtlosen Offline- und Online-Betrieb)
   Set<String> _checkedIn = {};
   Set<String> _checkedOut = {};
   Map<String, String> _checkedTimes = {};
   Map<String, String> _checkedOutTimes = {};
-  Map<String, String> _slotAmpeln = {}; // cI Ampel (🟢 🟡 🔴)
+  final Map<String, String> _slotAmpeln = {}; // cI Ampel (🟢 🟡 🔴)
 
-  bool _isProcessing = false;
+  bool get _isProcessing => _processingSlotId != null;
 
   @override
   void initState() {
     super.initState();
     _acl.refresh();
+    _searchCtrl.addListener(() {
+      if (mounted) {
+        setState(() {
+          _searchQuery = _searchCtrl.text.trim().toLowerCase();
+        });
+      }
+    });
     _initAndLoad();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _initAndLoad() async {
@@ -63,8 +89,20 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
       _checkedOut = (prefs.getStringList('admin_checked_out_slots') ?? []).toSet();
       final inJson = prefs.getString('admin_checked_times');
       final outJson = prefs.getString('admin_checked_out_times');
-      if (inJson != null) _checkedTimes = Map<String, String>.from(json.decode(inJson));
-      if (outJson != null) _checkedOutTimes = Map<String, String>.from(json.decode(outJson));
+      try {
+        if (inJson != null && inJson.trim().isNotEmpty) {
+          _checkedTimes = Map<String, String>.from(json.decode(inJson));
+        }
+      } catch (e) {
+        debugPrint('SelfCheckin: Error parsing admin_checked_times: $e');
+      }
+      try {
+        if (outJson != null && outJson.trim().isNotEmpty) {
+          _checkedOutTimes = Map<String, String>.from(json.decode(outJson));
+        }
+      } catch (e) {
+        debugPrint('SelfCheckin: Error parsing admin_checked_out_times: $e');
+      }
     });
   }
 
@@ -76,11 +114,19 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
     await prefs.setString('admin_checked_out_times', json.encode(_checkedOutTimes));
   }
 
+  /// Lädt die heutigen Schichten. Wenn bereits Schichten vorhanden sind,
+  /// wird die Liste im Hintergrund aktualisiert, um die Scrollposition nicht zu verlieren.
   Future<void> _loadTodaysSlots() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+    if (_allRelevantSlots.isEmpty) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    } else {
+      setState(() {
+        _isRefreshing = true;
+      });
+    }
 
     try {
       final now = DateTime.now();
@@ -92,10 +138,15 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
         endDate: now.add(const Duration(days: 1)),
       );
 
-      // 1. Schichten filtern: Gehören zum aktuellen Mitarbeiter (oder alle bei Admin)
+      // Schichten filtern:
+      // - Eigene Schichten (angestellteId == currentAngestellteId)
+      // - Schichten als Einsatzleiter (einsatzleiterId == currentAngestellteId)
+      // - Alle Schichten (bei Admin)
       final relevantSlots = allSlots.where((s) {
         if (!_acl.isAdmin && _currentAngestellteId != null) {
-          if (s.angestellteId != null && s.angestellteId != _currentAngestellteId) {
+          final isMySlot = s.angestellteId == _currentAngestellteId;
+          final isMyElSlot = s.isEinsatzleiter(_currentAngestellteId);
+          if (!isMySlot && !isMyElSlot) {
             return false;
           }
         }
@@ -133,37 +184,89 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
 
       if (!mounted) return;
       setState(() {
-        _slots = relevantSlots;
+        _allRelevantSlots = relevantSlots;
         _isLoading = false;
+        _isRefreshing = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'Fehler beim Laden: $e';
+        if (_allRelevantSlots.isEmpty) {
+          _errorMessage = 'Fehler beim Laden: $e';
+        }
         _isLoading = false;
+        _isRefreshing = false;
       });
     }
   }
 
+  bool get _hasSupervisorCapabilities {
+    if (_acl.isAdmin) return true;
+    if (_currentAngestellteId == null) return false;
+    return _allRelevantSlots.any((s) => s.isEinsatzleiter(_currentAngestellteId));
+  }
+
+  List<Slot> get _displayedSlots {
+    List<Slot> baseList;
+
+    if (!_hasSupervisorCapabilities) {
+      // Normaler Mitarbeiter: Sieht nur seine eigenen Schichten
+      baseList = _allRelevantSlots.where((s) => s.angestellteId == _currentAngestellteId).toList();
+    } else {
+      // Supervisor / Admin:
+      if (_selectedTab == 0) {
+        // Tab: Meine Schichten
+        baseList = _allRelevantSlots.where((s) => s.angestellteId == _currentAngestellteId).toList();
+      } else {
+        // Tab: Einsatzleitung / Team
+        if (_acl.isAdmin) {
+          baseList = _allRelevantSlots;
+        } else {
+          baseList = _allRelevantSlots.where((s) => s.isEinsatzleiter(_currentAngestellteId)).toList();
+        }
+      }
+    }
+
+    if (_searchQuery.isEmpty) return baseList;
+
+    return baseList.where((s) {
+      final nameMatch = s.name.toLowerCase().contains(_searchQuery);
+      final objMatch = s.objekteName?.toLowerCase().contains(_searchQuery) ?? false;
+      final empMatch = s.angestellteName?.toLowerCase().contains(_searchQuery) ?? false;
+      final posMatch = s.positionsname?.toLowerCase().contains(_searchQuery) ?? false;
+      return nameMatch || objMatch || empMatch || posMatch;
+    }).toList();
+  }
+
+  int get _mySlotsCount => _allRelevantSlots.where((s) => s.angestellteId == _currentAngestellteId).length;
+  int get _teamSlotsCount => _acl.isAdmin
+      ? _allRelevantSlots.length
+      : _allRelevantSlots.where((s) => s.isEinsatzleiter(_currentAngestellteId)).length;
+
   Future<void> _doCheckIn(Slot slot) async {
     if (_isProcessing) return;
-    setState(() => _isProcessing = true);
+    setState(() => _processingSlotId = slot.id);
 
     // 1. GPS Geofence Check über zentralen LocationService
     final gpsResult = await _location.checkGeofence(slot);
     if (!gpsResult.isSuccess) {
-      if (mounted) setState(() => _isProcessing = false);
-      _showGpsErrorDialog(gpsResult, slot);
+      if (mounted) setState(() => _processingSlotId = null);
+      _showGpsErrorDialog(gpsResult, slot, isCheckIn: true);
       return;
     }
 
-    // 2. Zeitstempel berechnen
+    await _executeCheckIn(slot);
+  }
+
+  /// Führt den tatsächlichen Check-In aus (nach GPS-Bestätigung oder Admin-Freigabe)
+  Future<void> _executeCheckIn(Slot slot) async {
+    setState(() => _processingSlotId = slot.id);
+
     final now = DateTime.now();
     final nowHHMM = DateFormat('HH:mm').format(now);
     final nowUtc = now.toUtc();
     final nowUtcStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(nowUtc);
 
-    // Haptisches Feedback wie am Terminal
     HapticFeedback.mediumImpact();
 
     // Ampel lokal vorab berechnen
@@ -182,7 +285,6 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
       } catch (_) {}
     }
 
-    // 3. API-Aufruf oder Offline-Queue
     try {
       await _api.checkInSlot(slot.id, checkInTime: nowUtcStr);
       if (mounted) {
@@ -191,10 +293,10 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
           _checkedTimes[slot.id] = nowHHMM;
           _slotAmpeln[slot.id] = ampel;
         });
-        _showSuccessSnackbar('✅ Eingecheckt um $nowHHMM Uhr ($ampel)');
+        final targetName = slot.angestellteName != null ? ' (${slot.angestellteName})' : '';
+        _showSuccessSnackbar('✅ Eingecheckt um $nowHHMM Uhr ($ampel)$targetName');
       }
     } catch (e) {
-      // Offline-Fallback über SyncQueue
       debugPrint('SelfCheckin: Netzwerkfehler bei checkInSlot, reihe in SyncQueue ein: $e');
       final offlinePayload = {
         'checkin': nowUtcStr,
@@ -213,16 +315,20 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
           _checkedTimes[slot.id] = nowHHMM;
           _slotAmpeln[slot.id] = ampel;
         });
-        _showSuccessSnackbar('✅ Vor Ort eingecheckt! (Offline gespeichert – wird bei Netz automatisch synchronisiert)');
+        _showSuccessSnackbar('✅ Vor Ort eingecheckt! (Offline gespeichert – synchronisiert automatisch)');
       }
     }
 
     await _saveLocalState();
-    if (mounted) setState(() => _isProcessing = false);
+    if (mounted) setState(() => _processingSlotId = null);
   }
 
   Future<void> _doCheckOut(Slot slot) async {
     if (_isProcessing) return;
+
+    final isOtherPerson = slot.angestellteName != null &&
+        slot.angestellteId != null &&
+        slot.angestellteId != _currentAngestellteId;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -234,7 +340,9 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
             Text('Schicht auschecken'),
           ],
         ),
-        content: Text('Möchtest du dich jetzt von der Schicht „${slot.name}“ auschecken?'),
+        content: Text(isOtherPerson
+            ? 'Möchtest du die Schicht von „${slot.angestellteName}“ (${slot.name}) jetzt auschecken?'
+            : 'Möchtest du dich jetzt von der Schicht „${slot.name}“ auschecken?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
           ElevatedButton(
@@ -248,17 +356,23 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
     if (confirmed != true) return;
 
     if (!mounted) return;
-    setState(() => _isProcessing = true);
+    setState(() => _processingSlotId = slot.id);
 
     // 1. GPS Geofence Check
     final gpsResult = await _location.checkGeofence(slot);
     if (!gpsResult.isSuccess) {
-      if (mounted) setState(() => _isProcessing = false);
-      _showGpsErrorDialog(gpsResult, slot);
+      if (mounted) setState(() => _processingSlotId = null);
+      _showGpsErrorDialog(gpsResult, slot, isCheckIn: false);
       return;
     }
 
-    // 2. Zeitstempel & Nachtschicht-Handling
+    await _executeCheckOut(slot);
+  }
+
+  /// Führt den tatsächlichen Check-Out aus (nach GPS-Bestätigung oder Admin-Freigabe)
+  Future<void> _executeCheckOut(Slot slot) async {
+    setState(() => _processingSlotId = slot.id);
+
     final now = DateTime.now();
     final nowHHMM = DateFormat('HH:mm').format(now);
     final nowUtc = now.toUtc();
@@ -266,7 +380,6 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
 
     HapticFeedback.heavyImpact();
 
-    // 3. API-Aufruf oder Offline-Queue
     try {
       await _api.checkOutSlot(slot.id, checkOutTime: nowUtcStr);
       if (mounted) {
@@ -274,7 +387,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
           _checkedOut.add(slot.id);
           _checkedOutTimes[slot.id] = nowHHMM;
         });
-        _showSuccessSnackbar('👋 Ausgecheckt um $nowHHMM Uhr');
+        final targetName = slot.angestellteName != null ? ' (${slot.angestellteName})' : '';
+        _showSuccessSnackbar('👋 Ausgecheckt um $nowHHMM Uhr$targetName');
       }
     } catch (e) {
       debugPrint('SelfCheckin: Netzwerkfehler bei checkOutSlot, reihe in SyncQueue ein: $e');
@@ -293,15 +407,15 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
           _checkedOut.add(slot.id);
           _checkedOutTimes[slot.id] = nowHHMM;
         });
-        _showSuccessSnackbar('👋 Ausgecheckt! (Offline gespeichert – wird bei Netz automatisch synchronisiert)');
+        _showSuccessSnackbar('👋 Ausgecheckt! (Offline gespeichert – synchronisiert automatisch)');
       }
     }
 
     await _saveLocalState();
-    if (mounted) setState(() => _isProcessing = false);
+    if (mounted) setState(() => _processingSlotId = null);
   }
 
-  void _showGpsErrorDialog(GpsCheckResult result, Slot slot) {
+  void _showGpsErrorDialog(GpsCheckResult result, Slot slot, {required bool isCheckIn}) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -343,13 +457,36 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                 ),
               ),
             ],
+            if (_acl.isAdmin) ...[
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amber.shade700.withOpacity(0.4)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.admin_panel_settings, size: 16, color: Colors.amber),
+                    SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Admin-Hinweis: Du kannst die Schicht bei Notfällen auch ohne GPS-Validierung freigeben.',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
         actions: [
           if (result.address != null || result.targetLat != null)
             TextButton.icon(
               icon: const Icon(Icons.directions),
-              label: const Text('Route anzeigen'),
+              label: const Text('Route'),
               onPressed: () {
                 Navigator.pop(ctx);
                 _location.openNavigation(
@@ -358,6 +495,23 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                   address: result.address,
                 );
               },
+            ),
+          if (_acl.isAdmin)
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                if (isCheckIn) {
+                  _executeCheckIn(slot);
+                } else {
+                  _executeCheckOut(slot);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amber.shade800,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Admin-Freigabe'),
             ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx),
@@ -384,6 +538,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final now = DateFormat('EEEE, d. MMMM yyyy', 'de_DE').format(DateTime.now());
+    final displayedList = _displayedSlots;
 
     return Scaffold(
       appBar: AppBar(
@@ -391,16 +546,28 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
         backgroundColor: AppConstants.primaryColor,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Schichten aktualisieren',
-            onPressed: _loadTodaysSlots,
-          ),
+          if (_isRefreshing)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.only(right: 16),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Schichten aktualisieren',
+              onPressed: _loadTodaysSlots,
+            ),
         ],
       ),
       body: Column(
         children: [
-          // Datums-Header
+          // Datums-Header mit GPS-Status
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -433,9 +600,69 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
             ),
           ),
 
-          if (_isProcessing)
-            const LinearProgressIndicator(),
+          // Umschalter für Einsatzleiter & Admins
+          if (_hasSupervisorCapabilities) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: isDark ? const Color(0xFF111827) : Colors.grey.shade100,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildTabButton(
+                      title: 'Meine Schichten',
+                      count: _mySlotsCount,
+                      isSelected: _selectedTab == 0,
+                      onTap: () => setState(() => _selectedTab = 0),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildTabButton(
+                      title: _acl.isAdmin ? 'Alle Schichten' : 'Einsatzleitung',
+                      count: _teamSlotsCount,
+                      isSelected: _selectedTab == 1,
+                      onTap: () => setState(() => _selectedTab = 1),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Schnellsuchfeld bei Supervisor-Ansicht
+            if (_selectedTab == 1)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: SizedBox(
+                  height: 40,
+                  child: TextField(
+                    controller: _searchCtrl,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Mitarbeiter oder Objekt suchen...',
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 16),
+                              onPressed: () => _searchCtrl.clear(),
+                            )
+                          : null,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+                      filled: true,
+                      fillColor: isDark ? Colors.white10 : Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
 
+          // Schichtenliste mit Erhalt der Scrollposition
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -455,12 +682,18 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                           ),
                         ),
                       )
-                    : _slots.isEmpty
+                    : displayedList.isEmpty
                         ? _buildNoShifts()
-                        : ListView.builder(
-                            padding: const EdgeInsets.all(12),
-                            itemCount: _slots.length,
-                            itemBuilder: (ctx, i) => _buildSlotCard(_slots[i]),
+                        : RefreshIndicator(
+                            onRefresh: _loadTodaysSlots,
+                            child: ListView.builder(
+                              key: const PageStorageKey('self_checkin_list'),
+                              controller: _scrollController,
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.all(12),
+                              itemCount: displayedList.length,
+                              itemBuilder: (ctx, i) => _buildSlotCard(displayedList[i]),
+                            ),
                           ),
           ),
         ],
@@ -468,18 +701,90 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
     );
   }
 
-  Widget _buildNoShifts() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.event_available, size: 64, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          const Text('Keine Schichten für heute', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          Text('Du hast für den heutigen Tag keine geplanten Einsätze.', style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
-        ],
+  Widget _buildTabButton({
+    required String title,
+    required int count,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppConstants.primaryColor
+                : (isDark ? Colors.white.withOpacity(0.05) : Colors.white),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? AppConstants.primaryColor : Colors.grey.withOpacity(0.2),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black87),
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: isSelected ? Colors.white.withOpacity(0.25) : Colors.grey.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black87),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _buildNoShifts() {
+    final hasSearch = _searchQuery.isNotEmpty;
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.18),
+        Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(hasSearch ? Icons.search_off : Icons.event_available, size: 56, color: Colors.grey.shade400),
+              const SizedBox(height: 16),
+              Text(
+                hasSearch ? 'Keine Treffer für „$_searchQuery“' : 'Keine Schichten für heute',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                hasSearch ? 'Bitte Suchbegriff anpassen oder löschen.' : 'Für den gewählten Bereich liegen heute keine Schichten vor.',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -487,6 +792,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    final isThisSlotProcessing = _processingSlotId == slot.id;
     final isIn = _checkedIn.contains(slot.id) || (slot.checkin != null && slot.checkin!.isNotEmpty);
     final isOut = _checkedOut.contains(slot.id) || (slot.checkout != null && slot.checkout!.isNotEmpty);
 
@@ -507,7 +813,13 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
       if (slot.dateEnd != null) endStr = fmt.format(DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(slot.dateEnd!).toLocal());
     } catch (_) {}
 
+    final isOtherEmployee = slot.angestellteId != null &&
+        _currentAngestellteId != null &&
+        slot.angestellteId != _currentAngestellteId;
+    final showEmployeeHeader = _hasSupervisorCapabilities || isOtherEmployee;
+
     return Card(
+      key: ValueKey(slot.id),
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -519,6 +831,56 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Prominenter Mitarbeiter-Header (bei Supervisor/Admin/Team-Ansicht)
+            if (showEmployeeHeader) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.white.withOpacity(0.06) : Colors.blue.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.2),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 11,
+                      backgroundColor: isDark ? Colors.blueGrey.shade800 : Colors.blue.shade100,
+                      child: Icon(Icons.person, size: 14, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        slot.angestellteName != null && slot.angestellteName!.isNotEmpty
+                            ? slot.angestellteName!
+                            : 'Mitarbeiter noch nicht zugewiesen',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: isDark ? Colors.white : AppConstants.primaryColor,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (slot.isEinsatzleiter(_currentAngestellteId))
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade700.withOpacity(0.18),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'Einsatzleitung',
+                          style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+
             // Status-Badge & Zeit
             Row(
               children: [
@@ -623,7 +985,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
 
             const SizedBox(height: 14),
 
-            // 1-Tap Aktions-Buttons (Terminal-Vorbild)
+            // 1-Tap Aktions-Buttons (mit Inline-Ladeindikator, um Scrollen stabil zu halten)
             Row(
               children: [
                 if (!isIn && !isOut)
@@ -631,8 +993,17 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                     child: SizedBox(
                       height: 46,
                       child: ElevatedButton.icon(
-                        icon: const Icon(Icons.login, size: 20),
-                        label: const Text('Vor Ort Einchecken', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        icon: isThisSlotProcessing
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.login, size: 20),
+                        label: Text(
+                          isThisSlotProcessing ? 'Wird geprüft...' : 'Vor Ort Einchecken',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green.shade600,
                           foregroundColor: Colors.white,
@@ -665,8 +1036,17 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                     child: SizedBox(
                       height: 46,
                       child: ElevatedButton.icon(
-                        icon: const Icon(Icons.logout, size: 18),
-                        label: const Text('Auschecken', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        icon: isThisSlotProcessing
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.logout, size: 18),
+                        label: Text(
+                          isThisSlotProcessing ? 'Wird beendet...' : 'Auschecken',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.red.shade700,
                           foregroundColor: Colors.white,
