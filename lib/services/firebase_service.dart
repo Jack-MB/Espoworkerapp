@@ -89,6 +89,10 @@ class FirebaseService {
             options: DefaultFirebaseOptions.currentPlatform,
           );
         }
+        if (Platform.isIOS) {
+          final apns = await _messaging.getAPNSToken();
+          if (apns == null) return null;
+        }
         final token = await _messaging.getToken();
         if (token != null && token.isNotEmpty) {
           await SecureStorageService().write('fcm_token', token);
@@ -124,13 +128,30 @@ class FirebaseService {
       }
     } else if (Platform.isIOS) {
       try {
-        await _messaging.requestPermission(
+        final settings = await _messaging.requestPermission(
           alert: true,
           badge: true,
           sound: true,
+          provisional: false,
         );
+        debugPrint('iOS Push AuthorizationStatus: ${settings.authorizationStatus}');
       } catch (e) {
         debugPrint('iOS permission error: $e');
+      }
+
+      // Auf iOS muss gewartet werden, bis APNs das Token bereitstellt
+      String? apnsToken = await _messaging.getAPNSToken();
+      int retries = 0;
+      while (apnsToken == null && retries < 10) {
+        await Future.delayed(const Duration(milliseconds: 600));
+        apnsToken = await _messaging.getAPNSToken();
+        retries++;
+      }
+      debugPrint('iOS APNs Token ($retries Versuche): $apnsToken');
+      if (apnsToken == null) {
+        throw Exception(
+          'Apple hat noch kein APNs-Token übermittelt (apns-token-not-set). Bitte stelle sicher, dass Push-Benachrichtigungen in den iOS-Einstellungen erlaubt sind und ein APNs-Schlüssel im Firebase-Projekt hinterlegt ist.'
+        );
       }
     }
 

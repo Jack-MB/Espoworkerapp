@@ -11,6 +11,8 @@ import Flutter
       UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
     }
 
+    application.registerForRemoteNotifications()
+
     // Register plugins for the main engine
     GeneratedPluginRegistrant.register(with: self)
     
