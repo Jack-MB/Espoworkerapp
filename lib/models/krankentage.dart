@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../utils/espo_date.dart';
 
 class Krankentage {
   final String id;
@@ -63,8 +64,7 @@ class Krankentage {
   static String _formatDateStr(String? raw) {
     if (raw == null || raw.trim().isEmpty) return '';
     try {
-      final clean = raw.trim().replaceFirst(' ', 'T');
-      final dt = DateTime.parse(clean);
+      final dt = espoDateToLocal(raw);
       return DateFormat('dd.MM.yyyy').format(dt);
     } catch (_) {
       return raw.split(' ')[0];

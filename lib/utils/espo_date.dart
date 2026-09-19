@@ -7,10 +7,14 @@ final _espoFormat = DateFormat('yyyy-MM-dd HH:mm:ss');
 /// Verwendung: espoUtcToLocal(slot.dateStart!)
 DateTime espoUtcToLocal(String s) {
   try {
-    if (s.contains('T')) {
-      return DateTime.parse(s).toLocal();
+    final clean = s.trim();
+    if (clean.contains('T')) {
+      if (clean.endsWith('Z') || clean.contains('+') || (clean.lastIndexOf('-') > 10)) {
+        return DateTime.parse(clean).toLocal();
+      }
+      return DateTime.parse('${clean}Z').toLocal();
     }
-    return _espoFormat.parseUtc(s).toLocal();
+    return _espoFormat.parseUtc(clean).toLocal();
   } catch (_) {
     try {
       return DateTime.parse(s).toLocal();
@@ -25,15 +29,12 @@ DateTime espoUtcToLocal(String s) {
 /// Behebt den Kalender-Tages-Offset: UTC-Mitternacht "YYYY-MM-DD 22:00:00" → lokaler Folgetag.
 DateTime espoDateToLocal(String s) {
   try {
-    if (!s.contains(':')) {
+    final clean = s.trim();
+    if (!clean.contains(':')) {
       // Reines Datumsfeld – keine Zeitzone nötig
-      return DateTime.parse(s);
+      return DateTime.parse(clean);
     }
-    if (s.contains('T')) {
-      return DateTime.parse(s).toLocal();
-    }
-    // Datetime-Feld → UTC parsen, in Lokalzeit umwandeln
-    return _espoFormat.parseUtc(s).toLocal();
+    return espoUtcToLocal(clean);
   } catch (_) {
     try {
       return DateTime.parse(s).toLocal();
@@ -48,16 +49,21 @@ DateTime espoDateToLocal(String s) {
 String? formatUtcToLocalTime(String? s) {
   if (s == null || s.trim().isEmpty) return null;
   try {
+    final clean = s.trim();
     DateTime local;
-    if (s.contains('T')) {
-      local = DateTime.parse(s).toLocal();
-    } else if (s.contains(' ')) {
-      local = _espoFormat.parseUtc(s).toLocal();
-    } else if (s.contains(':') && s.length <= 8) {
+    if (clean.contains('T')) {
+      if (clean.endsWith('Z') || clean.contains('+') || (clean.lastIndexOf('-') > 10)) {
+        local = DateTime.parse(clean).toLocal();
+      } else {
+        local = DateTime.parse('${clean}Z').toLocal();
+      }
+    } else if (clean.contains(' ')) {
+      local = _espoFormat.parseUtc(clean).toLocal();
+    } else if (clean.contains(':') && clean.length <= 8) {
       // Bereits reines Zeitfeld HH:mm oder HH:mm:ss
-      return s.substring(0, 5);
+      return clean.substring(0, 5);
     } else {
-      local = DateTime.parse(s).toLocal();
+      local = espoUtcToLocal(clean);
     }
     return DateFormat('HH:mm').format(local);
   } catch (_) {

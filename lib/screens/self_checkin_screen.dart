@@ -292,25 +292,32 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
         _showSuccessSnackbar('✅ Eingecheckt um $nowHHMM Uhr ($ampel)$targetName');
       }
     } catch (e) {
-      debugPrint('SelfCheckin: Netzwerkfehler bei checkInSlot, reihe in SyncQueue ein: $e');
-      final offlinePayload = {
-        'checkin': nowUtcStr,
-        'cI': ampel,
-        'status': 'Durchgeführt',
-      };
-      await _syncQueue.enqueue(
-        slotId: slot.id,
-        data: offlinePayload,
-        description: 'Check-In ${slot.name} ($nowHHMM)',
-      );
+      final errStr = e.toString();
+      if (errStr.contains('Berechtigung') || errStr.contains('deaktiviert') || errStr.contains('Forbidden') || errStr.contains('403')) {
+        if (mounted) {
+          _showErrorSnackbar('❌ Check-In abgelehnt: $errStr');
+        }
+      } else {
+        debugPrint('SelfCheckin: Netzwerkfehler bei checkInSlot, reihe in SyncQueue ein: $e');
+        final offlinePayload = {
+          'checkin': nowUtcStr,
+          'cI': ampel,
+          'status': 'Durchgeführt',
+        };
+        await _syncQueue.enqueue(
+          slotId: slot.id,
+          data: offlinePayload,
+          description: 'Check-In ${slot.name} ($nowHHMM)',
+        );
 
-      if (mounted) {
-        setState(() {
-          _checkedIn.add(slot.id);
-          _checkedTimes[slot.id] = nowHHMM;
-          _slotAmpeln[slot.id] = ampel;
-        });
-        _showSuccessSnackbar('✅ Vor Ort eingecheckt! (Offline gespeichert – synchronisiert automatisch)');
+        if (mounted) {
+          setState(() {
+            _checkedIn.add(slot.id);
+            _checkedTimes[slot.id] = nowHHMM;
+            _slotAmpeln[slot.id] = ampel;
+          });
+          _showSuccessSnackbar('✅ Vor Ort eingecheckt! (Offline gespeichert – synchronisiert automatisch)');
+        }
       }
     }
 
@@ -386,23 +393,30 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
         _showSuccessSnackbar('👋 Ausgecheckt um $nowHHMM Uhr$targetName');
       }
     } catch (e) {
-      debugPrint('SelfCheckin: Netzwerkfehler bei checkOutSlot, reihe in SyncQueue ein: $e');
-      final offlinePayload = {
-        'checkout': nowUtcStr,
-        'status': 'Durchgeführt',
-      };
-      await _syncQueue.enqueue(
-        slotId: slot.id,
-        data: offlinePayload,
-        description: 'Check-Out ${slot.name} ($nowHHMM)',
-      );
+      final errStr = e.toString();
+      if (errStr.contains('Berechtigung') || errStr.contains('deaktiviert') || errStr.contains('Forbidden') || errStr.contains('403')) {
+        if (mounted) {
+          _showErrorSnackbar('❌ Check-Out abgelehnt: $errStr');
+        }
+      } else {
+        debugPrint('SelfCheckin: Netzwerkfehler bei checkOutSlot, reihe in SyncQueue ein: $e');
+        final offlinePayload = {
+          'checkout': nowUtcStr,
+          'status': 'Durchgeführt',
+        };
+        await _syncQueue.enqueue(
+          slotId: slot.id,
+          data: offlinePayload,
+          description: 'Check-Out ${slot.name} ($nowHHMM)',
+        );
 
-      if (mounted) {
-        setState(() {
-          _checkedOut.add(slot.id);
-          _checkedOutTimes[slot.id] = nowHHMM;
-        });
-        _showSuccessSnackbar('👋 Ausgecheckt! (Offline gespeichert – synchronisiert automatisch)');
+        if (mounted) {
+          setState(() {
+            _checkedOut.add(slot.id);
+            _checkedOutTimes[slot.id] = nowHHMM;
+          });
+          _showSuccessSnackbar('👋 Ausgecheckt! (Offline gespeichert – synchronisiert automatisch)');
+        }
       }
     }
 
@@ -527,6 +541,16 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
       backgroundColor: Colors.green.shade700,
       behavior: SnackBarBehavior.floating,
       duration: const Duration(seconds: 4),
+    ));
+  }
+
+  void _showErrorSnackbar(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: Colors.red.shade700,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 5),
     ));
   }
 

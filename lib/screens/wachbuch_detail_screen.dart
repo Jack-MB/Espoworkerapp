@@ -805,7 +805,13 @@ class _WachbuchDetailScreenState extends State<WachbuchDetailScreen> {
             const Divider(height: 1),
             const SizedBox(height: 8),
             Wrap(spacing: 8, runSpacing: 8, children: note.attachments.map((att) {
-              final isImage = att.type.startsWith('image/');
+              final lowerName = att.name.toLowerCase();
+              final isImage = att.type.startsWith('image/') ||
+                  lowerName.endsWith('.jpg') ||
+                  lowerName.endsWith('.jpeg') ||
+                  lowerName.endsWith('.png') ||
+                  lowerName.endsWith('.webp') ||
+                  lowerName.endsWith('.gif');
               final fileUrl = '${ServerConfig().baseUrl}/?entryPoint=download&id=${att.id}';
               return isImage
                   ? GestureDetector(

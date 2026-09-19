@@ -69,5 +69,33 @@ void main() {
       final sep20 = DateTime(2026, 9, 20);
       expect(isSlotOnLocalDate(startUtc, endUtc, sep20), isTrue);
     });
+
+    test('espoUtcToLocal correctly parses strings with space, T, and Z', () {
+      final utc1 = '2026-09-19 12:00:00';
+      final dt1 = espoUtcToLocal(utc1);
+      final expected1 = DateTime.utc(2026, 9, 19, 12, 0, 0).toLocal();
+      expect(dt1.hour, equals(expected1.hour));
+
+      final utc2 = '2026-09-19T12:00:00';
+      final dt2 = espoUtcToLocal(utc2);
+      expect(dt2.hour, equals(expected1.hour));
+
+      final utc3 = '2026-09-19T12:00:00Z';
+      final dt3 = espoUtcToLocal(utc3);
+      expect(dt3.hour, equals(expected1.hour));
+    });
+
+    test('espoDateToLocal correctly parses pure date and UTC datetime', () {
+      // Pure date string
+      final d1 = espoDateToLocal('2026-09-20');
+      expect(d1.year, equals(2026));
+      expect(d1.month, equals(9));
+      expect(d1.day, equals(20));
+
+      // UTC 22:00 on Sep 19 (in UTC+2 / CEST, this is Sep 20 00:00:00)
+      final d2 = espoDateToLocal('2026-09-19 22:00:00');
+      final expectedDt = DateTime.utc(2026, 9, 19, 22, 0, 0).toLocal();
+      expect(d2.day, equals(expectedDt.day));
+    });
   });
 }

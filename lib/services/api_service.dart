@@ -23,6 +23,7 @@ import '../models/email_template.dart';
 import '../models/chat_room.dart';
 import '../models/chat_message.dart';
 import '../models/arbeitszeitkonto.dart';
+import '../utils/espo_date.dart';
 
 
 class _HttpWithTimeout {
@@ -723,7 +724,8 @@ class ApiService {
           final filtered = allCached.where((s) {
             if (s.dateStart == null) return false;
             try {
-              final sDate = DateTime.parse(s.dateStart!.contains(' ') ? s.dateStart!.split(' ')[0] : s.dateStart!);
+              final dt = espoDateToLocal(s.dateStart!);
+              final sDate = DateTime(dt.year, dt.month, dt.day);
               if (startDate != null && sDate.isBefore(DateTime(startDate.year, startDate.month, startDate.day))) {
                 return false;
               }
@@ -790,7 +792,7 @@ class ApiService {
         'where[1][value]': wachbuchId,
         'orderBy': 'createdAt',
         'order': 'desc',
-        'select': 'id,post,type,createdAt,createdById,createdByName,parentType,parentId,attachmentsIds,attachmentsNames',
+        'select': 'id,post,type,createdAt,createdById,createdByName,parentType,parentId,attachmentsIds,attachmentsNames,attachmentsTypes',
       },
     );
     final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
@@ -2074,18 +2076,16 @@ class ApiService {
         for (final s in slots) {
           if (s.dateStart != null && s.dateEnd != null) {
             try {
-              final start = DateTime.parse(s.dateStart!);
-              final end = DateTime.parse(s.dateEnd!);
-              if (now.isAfter(start) && now.isBefore(end)) {
+              final start = espoUtcToLocal(s.dateStart!);
+              final end = espoUtcToLocal(s.dateEnd!);
+              if (now.isAfter(start.subtract(const Duration(minutes: 30))) &&
+                  now.isBefore(end.add(const Duration(minutes: 30)))) {
                 activeSlot = s;
                 break;
               }
             } catch (_) {}
           }
         }
-      }
-      if (activeSlot == null && slots.isNotEmpty) {
-        activeSlot = slots.first;
       }
       if (activeSlot == null) return null;
 
