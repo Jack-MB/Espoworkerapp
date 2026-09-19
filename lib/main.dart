@@ -3,11 +3,18 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'dart:io' show Platform;
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 import 'screens/login_screen.dart';
+import 'screens/admin_login_screen.dart';
 import 'providers/theme_provider.dart';
 import 'core/app_theme.dart';
 import 'services/acl_service.dart';
 import 'core/server_config.dart';
+import 'services/firebase_service.dart';
+import 'services/notification_service.dart';
+import 'services/polling_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,24 +24,39 @@ void main() async {
   
   if (!kIsWeb) {
     try {
-      /* 
-      // Temporarily disabled to debug startup crash / iOS compatibility
-      // Initialize Firebase via custom service
-      await FirebaseService().init();
-      
-      // Initialize local notifications
-      await NotificationService().initialize();
-      // Initialize background worker
-      await PollingService().initialize();
-      // Start polling every 15 minutes (Android minimum)
-      await PollingService().schedulePolling(const Duration(minutes: 15));
-      */
-      
-      // Initialize ACL service
-      await AclService().init();
+      if (Platform.isAndroid || Platform.isIOS) {
+        // Initialize Firebase core FIRST with explicit options
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+        debugPrint('Firebase Core initialized successfully');
+      }
     } catch (e) {
-      debugPrint('Init error: $e');
+      debugPrint('Firebase Core init error: $e');
     }
+
+    try {
+      if (Platform.isAndroid) {
+        // Initialize Firebase messaging listeners & handlers
+        await FirebaseService().init();
+        
+        // Initialize local notifications
+        await NotificationService().initialize();
+        // Initialize background worker
+        await PollingService().initialize();
+        // Start polling every 15 minutes (Android minimum)
+        await PollingService().schedulePolling(const Duration(minutes: 15));
+      }
+    } catch (e) {
+      debugPrint('Android services init error: $e');
+    }
+  }
+
+  // Initialize ACL service on all platforms (Web, iOS, Android)
+  try {
+    await AclService().init();
+  } catch (e) {
+    debugPrint('AclService init error: $e');
   }
 
   runApp(
@@ -70,6 +92,9 @@ class EspoWorkerApp extends StatelessWidget {
       darkTheme: AppTheme.getTheme(themeProvider.selectedThemeName, true),
       themeMode: themeProvider.themeMode,
       home: const LoginScreen(),
+      routes: {
+        '/adminlogin': (context) => const AdminLoginScreen(),
+      },
     );
   }
 }
