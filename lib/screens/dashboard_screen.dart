@@ -848,6 +848,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           _showKrank = prefs.getBool('show_krank') ?? true;
           _showAbwesenheit = prefs.getBool('show_abwesenheit') ?? true;
           _showMeetings = prefs.getBool('show_meetings') ?? true;
+        } else {
+          _showSlots = true;
+          _showUrlaub = true;
+          _showKrank = true;
+          _showAbwesenheit = true;
+          _showMeetings = true;
         }
       });
     }
@@ -1592,6 +1598,22 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               ),
             ),
             TextButton(
+              onPressed: () {
+                setDialogState(() {
+                  _showSlots = true;
+                  _showUrlaub = true;
+                  _showKrank = true;
+                  _showAbwesenheit = true;
+                  _showMeetings = true;
+                });
+                setState(() {
+                  _refreshEvents();
+                  if (_persistFilters) _savePreferences();
+                });
+              },
+              child: const Text('Alle an'),
+            ),
+            TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Fertig'),
             ),
@@ -1736,7 +1758,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         ),
         backgroundColor: Theme.of(context).appBarTheme.backgroundColor ?? Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
-        centerTitle: true,
+        centerTitle: false,
         elevation: 0,
         actions: [
           if (_pendingQueueCount > 0)
@@ -1836,32 +1858,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               _fetchUnread();
             },
             tooltip: 'Chats',
-          ),
-          IconButton(
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Icon(
-                  _pushPermission == 'granted' ? Icons.phonelink_ring : Icons.notifications_paused_outlined,
-                  color: _pushPermission == 'granted' ? Colors.white : Colors.amberAccent,
-                ),
-                if (_pushPermission != 'granted')
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Colors.amberAccent,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            tooltip: 'Push-Einstellungen & Status',
-            onPressed: _handlePushBannerAction,
           ),
           IconButton(
             icon: const Icon(Icons.tune),
@@ -2262,77 +2258,112 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
                 final events = snapshot.data ?? [];
 
-                return SfCalendar(
-                  view: _calendarView,
-                  controller: _calendarController,
-                  dataSource: EventDataSource(events),
-                  firstDayOfWeek: 1,
-                  timeSlotViewSettings: const TimeSlotViewSettings(
-                    startHour: 5,
-                    endHour: 24,
-                    timeFormat: 'HH:mm',
-                    timeIntervalHeight: 60,
-                  ),
-                  monthViewSettings: const MonthViewSettings(
-                    appointmentDisplayMode: MonthAppointmentDisplayMode.appointment,
-                    appointmentDisplayCount: 3,
-                    monthCellStyle: MonthCellStyle(),
-                    showAgenda: true,
-                    agendaViewHeight: 160,
-                  ),
-                  onTap: (CalendarTapDetails details) {
-                    if (details.appointments != null && details.appointments!.isNotEmpty) {
-                      // If the user tapped on a specific appointment (either in month cell or agenda)
-                      if (details.targetElement == CalendarElement.appointment) {
-                        final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
-                        _showEventDetails(event);
-                      } 
-                      // If the user tapped on a day cell
-                      else if (details.targetElement == CalendarElement.calendarCell) {
-                        // Only open immediately if there is exactly one event
-                        if (details.appointments!.length == 1) {
-                          final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
-                          _showEventDetails(event);
-                        }
-                        // For multiple events, SfCalendar's 'showAgenda: true' will naturally 
-                        // fill the bottom list, and the user can then tap an item there.
-                      }
-                    }
-                  },
-                  appointmentBuilder: (context, calendarAppointmentDetails) {
-                    final ScheduledEvent event = calendarAppointmentDetails.appointments.first;
-                    final isMonthView = _calendarView == CalendarView.month;
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: event.background.withOpacity(0.9),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                      child: isMonthView
-                          ? Text(
-                              event.title,
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                            )
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  event.title,
-                                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                if (event.subtitle != null)
-                                  Text(
-                                    event.subtitle!,
-                                    style: const TextStyle(color: Colors.white70, fontSize: 10),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                              ],
+                return Column(
+                  children: [
+                    if (!_showSlots && _countSlots > 0)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        color: Colors.amber.shade900.withOpacity(0.92),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.filter_alt_off, color: Colors.white, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Schichten-Filter ist deaktiviert ($_countSlots Schichten vorhanden)',
+                                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                              ),
                             ),
-                    );
-                  },
+                            TextButton(
+                              style: TextButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.black87,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _showSlots = true;
+                                  if (_persistFilters) _savePreferences();
+                                  _refreshEvents();
+                                });
+                              },
+                              child: const Text('Einblenden', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    Expanded(
+                      child: SfCalendar(
+                        view: _calendarView,
+                        controller: _calendarController,
+                        dataSource: EventDataSource(events),
+                        firstDayOfWeek: 1,
+                        timeSlotViewSettings: const TimeSlotViewSettings(
+                          startHour: 5,
+                          endHour: 24,
+                          timeFormat: 'HH:mm',
+                          timeIntervalHeight: 60,
+                        ),
+                        monthViewSettings: const MonthViewSettings(
+                          appointmentDisplayMode: MonthAppointmentDisplayMode.appointment,
+                          appointmentDisplayCount: 3,
+                          monthCellStyle: MonthCellStyle(),
+                          showAgenda: true,
+                          agendaViewHeight: 160,
+                        ),
+                        onTap: (CalendarTapDetails details) {
+                          if (details.appointments != null && details.appointments!.isNotEmpty) {
+                            if (details.targetElement == CalendarElement.appointment) {
+                              final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
+                              _showEventDetails(event);
+                            } else if (details.targetElement == CalendarElement.calendarCell) {
+                              if (details.appointments!.length == 1) {
+                                final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
+                                _showEventDetails(event);
+                              }
+                            }
+                          }
+                        },
+                        appointmentBuilder: (context, calendarAppointmentDetails) {
+                          final ScheduledEvent event = calendarAppointmentDetails.appointments.first;
+                          final isMonthView = _calendarView == CalendarView.month;
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: event.background.withOpacity(0.9),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                            child: isMonthView
+                                ? Text(
+                                    event.title,
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  )
+                                : Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        event.title,
+                                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      if (event.subtitle != null)
+                                        Text(
+                                          event.subtitle!,
+                                          style: const TextStyle(color: Colors.white70, fontSize: 10),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                  ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
