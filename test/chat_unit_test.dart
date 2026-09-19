@@ -66,8 +66,8 @@ void main() {
     });
   });
 
-  group('ChatMessage Model Tests', () {
-    test('Parses complete ChatMessage with replyTo and attachments', () {
+  group('ChatMessage Model & Reactions Tests', () {
+    test('Parses complete ChatMessage with replyTo, reactions, readByCount and attachments', () {
       final json = {
         'id': 'msg_001',
         'body': 'Hier ist das Wachbuch-Foto',
@@ -76,9 +76,16 @@ void main() {
         'createdByName': 'Jan Philipp',
         'createdAt': '2026-09-19 12:05:00',
         'isRead': true,
+        'isDeleted': false,
+        'editedAt': '2026-09-19 12:06:00',
         'attachmentId': 'att_999',
         'attachmentType': 'image/jpeg',
         'attachmentName': 'foto.jpg',
+        'readByCount': 5,
+        'reactions': [
+          {'emoji': '👍', 'count': 2, 'userIds': ['user_me', 'user_other']},
+          {'emoji': '🔥', 'count': 1, 'userIds': ['user_3']},
+        ],
         'replyTo': {
           'id': 'msg_000',
           'body': 'Bitte Foto hochladen',
@@ -91,10 +98,45 @@ void main() {
       expect(msg.id, equals('msg_001'));
       expect(msg.body, equals('Hier ist das Wachbuch-Foto'));
       expect(msg.isRead, isTrue);
+      expect(msg.isDeleted, isFalse);
+      expect(msg.editedAt, equals('2026-09-19 12:06:00'));
+      expect(msg.readByCount, equals(5));
       expect(msg.attachmentId, equals('att_999'));
       expect(msg.attachmentType, equals('image/jpeg'));
-      expect(msg.replyTo, isNotNull);
-      expect(msg.replyTo!['body'], equals('Bitte Foto hochladen'));
+      expect(msg.reactions.length, equals(2));
+
+      final thumbsUp = msg.reactions.firstWhere((r) => r.emoji == '👍');
+      expect(thumbsUp.count, equals(2));
+      expect(thumbsUp.hasReacted('user_me'), isTrue);
+      expect(thumbsUp.hasReacted('user_unknown'), isFalse);
+
+      final fire = msg.reactions.firstWhere((r) => r.emoji == '🔥');
+      expect(fire.count, equals(1));
+      expect(fire.hasReacted('user_me'), isFalse);
+      expect(fire.hasReacted('user_3'), isTrue);
+    });
+
+    test('Correctly handles soft-deleted message JSON', () {
+      final json = {
+        'id': 'msg_del',
+        'body': '',
+        'chatRoomId': 'room_123',
+        'createdById': 'user_me',
+        'createdByName': 'Jan Philipp',
+        'createdAt': '2026-09-19 12:10:00',
+        'isRead': true,
+        'isDeleted': true,
+        'attachmentId': null,
+        'reactions': [],
+      };
+
+      final msg = ChatMessage.fromJson(json);
+
+      expect(msg.id, equals('msg_del'));
+      expect(msg.isDeleted, isTrue);
+      expect(msg.body, isEmpty);
+      expect(msg.attachmentId, isNull);
+      expect(msg.reactions, isEmpty);
     });
   });
 

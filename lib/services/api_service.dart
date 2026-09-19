@@ -1603,7 +1603,7 @@ class ApiService {
     final token = await _storageService.getToken();
     if (token == null) return;
     
-    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/markRead');
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/markReadReceipt');
     try {
       await _HttpWithTimeout.post(
         url, 
@@ -1611,6 +1611,80 @@ class ApiService {
         body: json.encode({'chatRoomId': roomId})
       );
     } catch (_) {}
+  }
+
+  Future<bool> deleteChatMessage(String messageId) async {
+    final token = await _storageService.getToken();
+    if (token == null) return false;
+
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/deleteMessage');
+    try {
+      final response = await _HttpWithTimeout.post(
+        url,
+        headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
+        body: json.encode({'messageId': messageId}),
+      );
+      return response.statusCode == 200;
+    } catch (_) {}
+    return false;
+  }
+
+  Future<List<ChatReaction>?> toggleChatReaction(String messageId, String emoji) async {
+    final token = await _storageService.getToken();
+    if (token == null) return null;
+
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/toggleReaction');
+    try {
+      final response = await _HttpWithTimeout.post(
+        url,
+        headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
+        body: json.encode({'messageId': messageId, 'emoji': emoji}),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['reactions'] is List) {
+          return (data['reactions'] as List)
+              .whereType<Map<String, dynamic>>()
+              .map((r) => ChatReaction.fromJson(r))
+              .toList();
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> setChatTyping(String roomId) async {
+    final token = await _storageService.getToken();
+    if (token == null) return;
+
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/setTyping');
+    try {
+      await _HttpWithTimeout.post(
+        url,
+        headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
+        body: json.encode({'chatRoomId': roomId}),
+      );
+    } catch (_) {}
+  }
+
+  Future<List<String>> getChatTyping(String roomId) async {
+    final token = await _storageService.getToken();
+    if (token == null) return [];
+
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getTyping?chatRoomId=${Uri.encodeComponent(roomId)}');
+    try {
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['typing'] is List) {
+          return (data['typing'] as List)
+              .map((e) => (e['name'] ?? '').toString())
+              .where((name) => name.isNotEmpty)
+              .toList();
+        }
+      }
+    } catch (_) {}
+    return [];
   }
 
   Future<int> getChatUnreadCount() async {

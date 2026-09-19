@@ -8,6 +8,8 @@ import 'secure_storage_service.dart';
 import 'api_service.dart';
 import 'notification_service.dart';
 
+import '../screens/chat_screen.dart';
+
 // Globale Handler-Funktion für Push-Nachrichten, wenn die App im Hintergrund / geschlossen ist
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -64,6 +66,15 @@ class FirebaseService {
           debugPrint('Message notification: ${message.notification?.title} - ${message.notification?.body}');
           final entityType = message.data['relatedType'] ?? message.data['entityType'];
           final entityId = message.data['relatedId'] ?? message.data['entityId'];
+
+          // Logische Verbesserung: Störendes System-Banner unterdrücken, wenn der User den Chat bereits geöffnet hat!
+          if ((entityType == 'ChatRoom' || entityType == 'ChatMessage') &&
+              entityId != null &&
+              entityId == ChatScreen.currentActiveChatRoomId) {
+            debugPrint('Foreground notification suppressed for active chat room: $entityId');
+            return;
+          }
+
           final payload = entityId != null ? '$entityType:$entityId' : entityType?.toString();
 
           NotificationService().showNotification(
