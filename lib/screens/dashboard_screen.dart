@@ -152,7 +152,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   int _countAbwesenheit = 0;
   int _countMeetings = 0;
   bool? _serverOnline;
-  bool _showPushBanner = false;
   String _pushPermission = 'granted';
   List<Map<String, dynamic>> _upcomingBirthdays = [];
   bool _birthdaysDismissed = false;
@@ -331,7 +330,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         if (mounted) {
           setState(() {
             _pushPermission = notificationsEnabled ? 'granted' : 'denied';
-            _showPushBanner = !notificationsEnabled;
           });
         }
       } catch (e) {
@@ -339,7 +337,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         if (mounted) {
           setState(() {
             _pushPermission = 'denied';
-            _showPushBanner = true;
           });
         }
       }
@@ -358,26 +355,19 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       if (mounted) {
         setState(() {
           _pushPermission = 'granted';
-          _showPushBanner = false;
         });
       }
       return;
     }
 
-    // Falls nicht erteilt -> Prüfen ob Banner kürzlich weggeklickt wurde
-    final prefs = await SharedPreferences.getInstance();
-    final dismissedAt = prefs.getInt('push_banner_dismissed_at') ?? 0;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final isDismissedRecently = (now - dismissedAt) < (24 * 60 * 60 * 1000); // 24h
-
     if (mounted) {
       setState(() {
         _pushPermission = perm;
-        _showPushBanner = !isDismissedRecently;
       });
     }
 
     if (webPush.shouldShowIosTutorial) {
+      final prefs = await SharedPreferences.getInstance();
       final showedTutorial = prefs.getBool('ios_push_tutorial_shown') ?? false;
       if (!showedTutorial) {
         await prefs.setBool('ios_push_tutorial_shown', true);
@@ -394,233 +384,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       onTokenSynced: () {
         _syncFcmTokenOnStart();
       },
-    );
-  }
-
-  Widget _buildPushBanner() {
-    final isDenied = _pushPermission == 'denied';
-    final isIosNonStandalone = WebPushService().shouldShowIosTutorial;
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isDenied
-              ? [const Color(0xFFFFF3E0), const Color(0xFFFFE0B2)]
-              : [const Color(0xFFE3F2FD), const Color(0xFFBBDEFB)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDenied ? Colors.orange.shade300 : Colors.blue.shade300,
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isDenied ? Colors.orange.shade100 : Colors.blue.shade100,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                isDenied ? Icons.notifications_off_outlined : Icons.notifications_active_outlined,
-                color: isDenied ? Colors.orange.shade800 : Colors.blue.shade800,
-                size: 26,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isDenied
-                        ? (!kIsWeb && (Platform.isAndroid || Platform.isIOS)
-                            ? 'Push-Berechtigung & Status'
-                            : 'Benachrichtigungen blockiert')
-                        : isIosNonStandalone
-                            ? 'Zum Home-Bildschirm für Push'
-                            : 'Schicht-Benachrichtigungen aktivieren',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: isDenied ? Colors.orange.shade900 : Colors.blue.shade900,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    isDenied
-                        ? (!kIsWeb && (Platform.isAndroid || Platform.isIOS)
-                            ? 'In den Einstellungen aktiviert? Tippe hier für Status, Token-Synchronisation und Test-Push.'
-                            : 'Benachrichtigungen sind im Browser deaktiviert. Tippe hier, um zu sehen, wie du sie freischaltest.')
-                        : isIosNonStandalone
-                            ? 'Füge MB Worker zum Home-Bildschirm hinzu, um Schichten direkt aufs iPhone zu erhalten.'
-                            : 'Erhalte neue Schichten und Änderungen sofort per Push auf dein Handy.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: isDenied ? Colors.brown.shade800 : Colors.blueGrey.shade800,
-                      height: 1.3,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _handlePushBannerAction,
-                        icon: Icon(
-                          isDenied
-                              ? (!kIsWeb && (Platform.isAndroid || Platform.isIOS) ? Icons.tune : Icons.help_outline)
-                              : Icons.check_circle_outline,
-                          size: 18,
-                        ),
-                        label: Text(
-                          isDenied
-                              ? (!kIsWeb && (Platform.isAndroid || Platform.isIOS) ? 'Einstellungen & Test' : 'Anleitung')
-                              : isIosNonStandalone
-                                  ? 'So geht\'s'
-                                  : 'Jetzt aktivieren',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: isDenied ? Colors.orange.shade700 : Theme.of(context).primaryColor,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      TextButton(
-                        onPressed: () async {
-                          setState(() => _showPushBanner = false);
-                          final prefs = await SharedPreferences.getInstance();
-                          await prefs.setInt('push_banner_dismissed_at', DateTime.now().millisecondsSinceEpoch);
-                        },
-                        child: Text(
-                          'Später',
-                          style: TextStyle(
-                            color: Colors.grey.shade700,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPushStatusQuickBar() {
-    final isGranted = _pushPermission == 'granted';
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primaryColor = Theme.of(context).primaryColor;
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E293B) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isGranted ? Colors.green.withOpacity(0.35) : Colors.orange.withOpacity(0.4),
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          onTap: _handlePushBannerAction,
-          borderRadius: BorderRadius.circular(14),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: isGranted ? Colors.green : Colors.orange,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: (isGranted ? Colors.green : Colors.orange).withOpacity(0.5),
-                        blurRadius: 5,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Icon(
-                  isGranted ? Icons.notifications_active : Icons.notifications_off_outlined,
-                  size: 20,
-                  color: isGranted ? Colors.green : Colors.orange,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    isGranted ? 'Push-Mitteilungen: Aktiv' : 'Push-Mitteilungen: Nicht aktiv',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: primaryColor.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.tune, size: 14, color: primaryColor),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Einstellungen',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: primaryColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 
@@ -2236,51 +1999,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   _buildDrawerItem(Icons.dashboard, 'Dashboard', () {
                     // Drawer already pops in _buildDrawerItem, nothing else to do
                   }),
-                  _buildDrawerItem(
-                    Icons.notifications_active,
-                    'Push-Benachrichtigungen',
-                    _handlePushBannerAction,
-                    trailing: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _pushPermission == 'granted'
-                            ? Colors.green.withOpacity(0.2)
-                            : Colors.amber.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _pushPermission == 'granted'
-                              ? Colors.greenAccent
-                              : Colors.amberAccent,
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _pushPermission == 'granted'
-                                ? Icons.check_circle
-                                : Icons.warning_amber_rounded,
-                            size: 12,
-                            color: _pushPermission == 'granted'
-                                ? Colors.greenAccent
-                                : Colors.amberAccent,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _pushPermission == 'granted' ? 'Aktiv' : 'Einrichten',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: _pushPermission == 'granted'
-                                  ? Colors.greenAccent
-                                  : Colors.amberAccent,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
                   _buildDrawerItem(Icons.touch_app_rounded, 'Einstempeln / Check-In', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const SelfCheckinScreen()));
                   }),
@@ -2423,10 +2141,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       ),
       body: Column(
         children: [
-          _buildPushStatusQuickBar(),
-          if (_showPushBanner)
-            _buildPushBanner(),
-
           _buildBirthdaysWidget(),
 
           // ─── AKTIONEN: EINSTEMPELN & WACHBUCH (Prominent) ───
