@@ -129,17 +129,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   String? _authToken;
 
   Future<List<ScheduledEvent>> _eventsFuture = Future.value([]);
-
-  // Dashboard & Monatsübersicht State
-  int _selectedTab = 0; // 0 = Dashboard, 1 = Kalender
-  DateTime _selectedMonth = DateTime.now();
-  List<Slot> _rawSlots = [];
-
-  static const List<String> _monthNames = [
-    'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-    'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
-  ];
-  static const List<String> _dayNames = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+  
   // Check-in state for calendar
   final SyncQueueService _syncQueue = SyncQueueService();
   Set<String> _checkedSlotIds = {};
@@ -957,7 +947,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _countKrank = allKrankentage.length;
       _countAbwesenheit = allAbwesenheiten.length;
       _countMeetings = allMeetings.length;
-      _rawSlots = allSlots;
 
       final slots = _showSlots ? allSlots : [];
       final urlaubs = _showUrlaub ? allUrlaubs : [];
@@ -1718,859 +1707,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     );
   }
 
-  // ─── DASHBOARD REDESIGN: HELPER & WIDGET METHODS ───
-
-  bool _isMySlot(Slot slot) {
-    if (_angestellteId != null && _angestellteId!.isNotEmpty) {
-      if (slot.angestellteId == _angestellteId) return true;
-    }
-    if (_angestellte?.name.isNotEmpty == true && slot.angestellteName == _angestellte!.name) {
-      return true;
-    }
-    if (_username.isNotEmpty && slot.angestellteName == _username) {
-      return true;
-    }
-    return false;
-  }
-
-  List<Slot> _getUpcomingSlots() {
-    final now = DateTime.now();
-    final DateFormat format = DateFormat('yyyy-MM-dd HH:mm:ss');
-
-    final filtered = _rawSlots.where((slot) {
-      if (!_isMySlot(slot)) return false;
-      if (slot.status == 'Storniert' || slot.status == 'Abgesagt' || slot.annahmeStatus == 'Abgelehnt') {
-        return false;
-      }
-      if (slot.dateEnd == null) return false;
-      try {
-        final end = format.parseUtc(slot.dateEnd!).toLocal();
-        return end.isAfter(now);
-      } catch (_) {
-        return false;
-      }
-    }).toList();
-
-    filtered.sort((a, b) {
-      try {
-        final aStart = format.parseUtc(a.dateStart!).toLocal();
-        final bStart = format.parseUtc(b.dateStart!).toLocal();
-        return aStart.compareTo(bStart);
-      } catch (_) {
-        return 0;
-      }
-    });
-
-    return filtered;
-  }
-
-  Map<String, double> _calculateMonthlyHours(DateTime month) {
-    final DateFormat format = DateFormat('yyyy-MM-dd HH:mm:ss');
-    final now = DateTime.now();
-
-    double geleistet = 0.0;
-    double geplant = 0.0;
-
-    for (final slot in _rawSlots) {
-      if (!_isMySlot(slot)) continue;
-      if (slot.status == 'Storniert' || slot.status == 'Abgesagt' || slot.annahmeStatus == 'Abgelehnt') {
-        continue;
-      }
-      if (slot.dateStart == null || slot.dateEnd == null) continue;
-
-      try {
-        final start = format.parseUtc(slot.dateStart!).toLocal();
-        final end = format.parseUtc(slot.dateEnd!).toLocal();
-
-        if (start.year != month.year || start.month != month.month) {
-          continue;
-        }
-
-        double hours = 0.0;
-        if (slot.stundenanzahl != null && slot.stundenanzahl! > 0) {
-          hours = slot.stundenanzahl!;
-        } else {
-          hours = end.difference(start).inMinutes / 60.0;
-        }
-
-        final bool isGeleistet = (slot.checkout != null && slot.checkout!.isNotEmpty) ||
-            slot.status == 'Durchgeführt' ||
-            end.isBefore(now);
-
-        if (isGeleistet) {
-          geleistet += hours;
-        } else {
-          geplant += hours;
-        }
-      } catch (_) {}
-    }
-
-    return {
-      'geleistet': geleistet,
-      'geplant': geplant,
-      'gesamt': geleistet + geplant,
-    };
-  }
-
-  String _formatMonth(DateTime dt) {
-    return '${_monthNames[dt.month - 1]} ${dt.year}';
-  }
-
-  String _formatHours(double hours) {
-    return '${hours.toStringAsFixed(1).replaceAll('.', ',')} Std.';
-  }
-
-  Widget _buildProfileAvatarAction() {
-    return GestureDetector(
-      onTap: () {
-        if (_angestellteId != null && _angestellteId!.isNotEmpty) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => AngestellteProfileScreen(angestellteId: _angestellteId!)),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Kein Angestellten-Profil für diesen Benutzer hinterlegt.')),
-          );
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.only(left: 6, right: 14),
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.white70, width: 1.5),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.18),
-              blurRadius: 4,
-              offset: const Offset(0, 1),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(6.5),
-          child: (_angestellte?.rawData['mitarbeiterfotoId'] != null && _authToken != null)
-              ? Image.network(
-                  '${ServerConfig().apiUrl}/Attachment/file/${_angestellte?.rawData['mitarbeiterfotoId']}',
-                  headers: _authToken!.startsWith('ApiKey ')
-                      ? {'X-Api-Key': _authToken!.split(' ')[1]}
-                      : {'Authorization': _authToken!},
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 22, color: Colors.white),
-                )
-              : const Icon(Icons.person, size: 22, color: Colors.white),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildViewSwitcher() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E222B) : const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark ? Colors.white10 : const Color(0xFFE2E8F0),
-          width: 1,
-        ),
-      ),
-      padding: const EdgeInsets.all(3),
-      child: Row(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() => _selectedTab = 0),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: _selectedTab == 0 ? Theme.of(context).primaryColor : Colors.transparent,
-                  borderRadius: BorderRadius.circular(9),
-                  boxShadow: _selectedTab == 0
-                      ? [
-                          BoxShadow(
-                            color: Theme.of(context).primaryColor.withOpacity(0.3),
-                            blurRadius: 4,
-                            offset: const Offset(0, 1),
-                          )
-                        ]
-                      : null,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.dashboard_rounded,
-                      size: 16,
-                      color: _selectedTab == 0 ? Colors.white : (isDark ? Colors.white60 : Colors.grey.shade600),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Dashboard',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                        color: _selectedTab == 0 ? Colors.white : (isDark ? Colors.white70 : Colors.grey.shade700),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() => _selectedTab = 1),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: _selectedTab == 1 ? Theme.of(context).primaryColor : Colors.transparent,
-                  borderRadius: BorderRadius.circular(9),
-                  boxShadow: _selectedTab == 1
-                      ? [
-                          BoxShadow(
-                            color: Theme.of(context).primaryColor.withOpacity(0.3),
-                            blurRadius: 4,
-                            offset: const Offset(0, 1),
-                          )
-                        ]
-                      : null,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.calendar_month_rounded,
-                      size: 16,
-                      color: _selectedTab == 1 ? Colors.white : (isDark ? Colors.white60 : Colors.grey.shade600),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Kalender',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                        color: _selectedTab == 1 ? Colors.white : (isDark ? Colors.white70 : Colors.grey.shade700),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDashboardView() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return RefreshIndicator(
-      onRefresh: () async {
-        _refreshEvents();
-        await _loadUser();
-        await _fetchUnread();
-      },
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          children: [
-            _buildKommendeDiensteCard(),
-            _buildMonatsuebersichtCard(),
-            _buildBrandingPill(isDark),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildKommendeDiensteCard() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final upcomingSlots = _getUpcomingSlots();
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E222B) : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.25 : 0.05),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
-        border: Border.all(
-          color: isDark ? Colors.white10 : const Color(0xFFE2E8F0),
-          width: 1,
-        ),
-      ),
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        children: [
-          Text(
-            'Kommende Dienste',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: isDark ? Colors.white : Colors.grey.shade900,
-              letterSpacing: 0.2,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          if (upcomingSlots.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 28.0),
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.event_available_rounded,
-                    size: 44,
-                    color: isDark ? Colors.white30 : Colors.grey.shade400,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Keine anstehenden Dienste',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? Colors.white70 : Colors.grey.shade700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Aktuell sind keine kommenden Schichten eingeteilt.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? Colors.white38 : Colors.grey.shade500,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            )
-          else
-            Column(
-              children: [
-                ...upcomingSlots.take(4).map((slot) => _buildUpcomingSlotItem(slot, isDark)),
-                if (upcomingSlots.length > 4)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: InkWell(
-                      onTap: () => setState(() => _selectedTab = 1),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.calendar_month, size: 14, color: Theme.of(context).primaryColor),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Alle ${upcomingSlots.length} kommenden Dienste im Kalender ansehen',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Theme.of(context).primaryColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUpcomingSlotItem(Slot slot, bool isDark) {
-    final DateFormat format = DateFormat('yyyy-MM-dd HH:mm:ss');
-    DateTime? start;
-    DateTime? end;
-    try {
-      if (slot.dateStart != null) start = format.parseUtc(slot.dateStart!).toLocal();
-      if (slot.dateEnd != null) end = format.parseUtc(slot.dateEnd!).toLocal();
-    } catch (_) {}
-
-    final now = DateTime.now();
-    final bool isToday = start != null &&
-        start.year == now.year &&
-        start.month == now.month &&
-        start.day == now.day;
-    final bool isTomorrow = start != null &&
-        start.year == now.year &&
-        start.month == now.month &&
-        start.day == now.day + 1;
-
-    String dayOfWeek = '';
-    String dayMonth = '';
-    if (start != null) {
-      dayOfWeek = isToday ? 'HEUTE' : (isTomorrow ? 'MORGEN' : _dayNames[start.weekday - 1].toUpperCase());
-      dayMonth = '${start.day.toString().padLeft(2, '0')}.${start.month.toString().padLeft(2, '0')}.';
-    }
-
-    final String timeStr = (start != null && end != null)
-        ? '${DateFormat('HH:mm').format(start)} – ${DateFormat('HH:mm').format(end)} Uhr'
-        : '';
-
-    final double durationHours = (slot.stundenanzahl != null && slot.stundenanzahl! > 0)
-        ? slot.stundenanzahl!
-        : (start != null && end != null ? end.difference(start).inMinutes / 60.0 : 0.0);
-
-    final String title = (slot.objekteName != null && slot.objekteName!.isNotEmpty)
-        ? slot.objekteName!
-        : (slot.name.isNotEmpty ? slot.name : 'Schicht');
-
-    final String? position = slot.positionsname;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.white.withOpacity(0.04) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isToday
-              ? const Color(0xFF10B981).withOpacity(0.5)
-              : (isDark ? Colors.white12 : const Color(0xFFE2E8F0)),
-          width: isToday ? 1.5 : 1,
-        ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () {
-            final subtitle = (slot.objekteName != null && slot.objekteName!.isNotEmpty)
-                ? slot.objekteName!
-                : (slot.positionsname ?? '');
-            final event = ScheduledEvent(
-              slot.name.isNotEmpty ? slot.name : 'Schicht',
-              subtitle: subtitle,
-              from: start ?? DateTime.now(),
-              to: end ?? DateTime.now(),
-              background: isToday ? const Color(0xFF10B981) : Theme.of(context).primaryColor,
-              originalObject: slot,
-            );
-            _showEventDetails(event);
-          },
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Date Badge Column
-                Container(
-                  width: 54,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isToday
-                        ? const Color(0xFF10B981).withOpacity(0.15)
-                        : (isDark ? Colors.white10 : Theme.of(context).primaryColor.withOpacity(0.08)),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isToday
-                          ? const Color(0xFF10B981)
-                          : (isDark ? Colors.white24 : Theme.of(context).primaryColor.withOpacity(0.2)),
-                      width: 1,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        dayOfWeek,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: isToday
-                              ? const Color(0xFF10B981)
-                              : (isDark ? Colors.white70 : Theme.of(context).primaryColor),
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        dayMonth,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: isDark ? Colors.white : Colors.grey.shade800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-
-                // Shift Info Column
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: isDark ? Colors.white : Colors.grey.shade900,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 3),
-                      Row(
-                        children: [
-                          Icon(Icons.access_time, size: 12, color: isDark ? Colors.white54 : Colors.grey.shade600),
-                          const SizedBox(width: 4),
-                          Text(
-                            timeStr,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: isDark ? Colors.white70 : Colors.grey.shade700,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          if (durationHours > 0) ...[
-                            const SizedBox(width: 4),
-                            Text(
-                              '(${durationHours.toStringAsFixed(1).replaceAll('.', ',')}h)',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: isDark ? Colors.white38 : Colors.grey.shade500,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      if (position != null && position.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(Icons.shield_outlined, size: 12, color: Theme.of(context).primaryColor),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                position,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).primaryColor,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
-                // Action / Arrow Icon
-                if (isToday)
-                  ElevatedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SelfCheckinScreen()),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF10B981),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      elevation: 1,
-                    ),
-                    child: const Text('Check-in', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                  )
-                else
-                  Icon(Icons.chevron_right, size: 20, color: isDark ? Colors.white38 : Colors.grey.shade400),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMonatsuebersichtCard() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final hours = _calculateMonthlyHours(_selectedMonth);
-    final geleistet = hours['geleistet'] ?? 0.0;
-    final geplant = hours['geplant'] ?? 0.0;
-    final gesamt = hours['gesamt'] ?? 0.0;
-
-    final now = DateTime.now();
-    final isCurrentMonth = _selectedMonth.year == now.year && _selectedMonth.month == now.month;
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E222B) : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.25 : 0.05),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
-        border: Border.all(
-          color: isDark ? Colors.white10 : const Color(0xFFE2E8F0),
-          width: 1,
-        ),
-      ),
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Title & Month selector
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Monatsübersicht',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.white : Colors.grey.shade900,
-                  letterSpacing: 0.2,
-                ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.chevron_left, size: 22),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                    onPressed: () {
-                      setState(() {
-                        _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month - 1);
-                      });
-                    },
-                  ),
-                  Text(
-                    _formatMonth(_selectedMonth),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(context).primaryColor,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.chevron_right, size: 22),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                    onPressed: () {
-                      setState(() {
-                        _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month + 1);
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-          if (!isCurrentMonth)
-            Align(
-              alignment: Alignment.centerRight,
-              child: InkWell(
-                onTap: () => setState(() => _selectedMonth = DateTime.now()),
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    'Zu aktuellem Monat',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(context).primaryColor,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
-              ),
-            )
-          else
-            const SizedBox(height: 12),
-
-          const SizedBox(height: 8),
-
-          // Geleistete Stunden Row
-          _buildHoursRow(
-            label: 'Geleistete Stunden:',
-            hours: geleistet,
-            color: const Color(0xFF10B981),
-            icon: Icons.check_circle_outline,
-            isDark: isDark,
-          ),
-
-          const SizedBox(height: 14),
-
-          // Geplante Stunden Row
-          _buildHoursRow(
-            label: 'Geplante Stunden:',
-            hours: geplant,
-            color: const Color(0xFFF59E0B),
-            icon: Icons.schedule,
-            isDark: isDark,
-          ),
-
-          const SizedBox(height: 14),
-
-          Divider(color: isDark ? Colors.white10 : Colors.grey.shade200, height: 1),
-
-          const SizedBox(height: 14),
-
-          // Gesamtstunden Row
-          _buildHoursRow(
-            label: 'Gesamtstunden:',
-            hours: gesamt,
-            color: Theme.of(context).primaryColor,
-            icon: Icons.hourglass_full_rounded,
-            isDark: isDark,
-            isBold: true,
-          ),
-
-          // Progress bar if gesamt > 0
-          if (gesamt > 0) ...[
-            const SizedBox(height: 18),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: LinearProgressIndicator(
-                value: (geleistet / gesamt).clamp(0.0, 1.0),
-                minHeight: 8,
-                backgroundColor: isDark ? Colors.white12 : Colors.grey.shade200,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  geleistet >= gesamt ? const Color(0xFF10B981) : Theme.of(context).primaryColor,
-                ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${((geleistet / gesamt) * 100).toInt()}% absolviert',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: isDark ? Colors.white54 : Colors.grey.shade600,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                InkWell(
-                  onTap: () {
-                    if (_angestellteId != null && _angestellteId!.isNotEmpty) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const ArbeitszeitkontoScreen(),
-                        ),
-                      );
-                    }
-                  },
-                  child: Text(
-                    'Arbeitszeitkonto öffnen →',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Theme.of(context).primaryColor,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHoursRow({
-    required String label,
-    required double hours,
-    required Color color,
-    required IconData icon,
-    required bool isDark,
-    bool isBold = false,
-  }) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: isBold ? 16 : 15,
-              fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
-              color: isDark ? (isBold ? Colors.white : Colors.white70) : (isBold ? Colors.black87 : Colors.grey.shade700),
-            ),
-          ),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: color.withOpacity(isDark ? 0.18 : 0.10),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            _formatHours(hours),
-            style: TextStyle(
-              fontSize: isBold ? 16 : 14,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBrandingPill(bool isDark) {
-    return Container(
-      margin: const EdgeInsets.only(top: 12, bottom: 24),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E222B) : Colors.white,
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.25 : 0.06),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-        border: Border.all(
-          color: isDark ? Colors.white10 : const Color(0xFFE2E8F0),
-          width: 1,
-        ),
-      ),
-      child: Text(
-        'app.secware.io',
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: isDark ? Colors.white70 : Colors.black87,
-          letterSpacing: 0.3,
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (!_isInitialized) {
@@ -2615,7 +1751,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               ),
             ),
             const SizedBox(width: 8),
-            Text(_selectedTab == 0 ? 'Dashboard' : 'Übersicht'),
+            const Text('Übersicht'),
             const SizedBox(width: 8),
             if (_serverOnline != null)
               Container(
@@ -2738,28 +1874,25 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             },
             tooltip: 'Chats',
           ),
-          if (_selectedTab == 1) ...[
-            IconButton(
-              icon: const Icon(Icons.tune),
-              onPressed: _showFilterDialog,
-              tooltip: 'Filter',
-            ),
-            IconButton(
-              icon: Icon(_calendarView == CalendarView.week ? Icons.calendar_month : Icons.view_week),
-              onPressed: () {
-                setState(() {
-                  if (_calendarView == CalendarView.week) {
-                    _calendarView = CalendarView.month;
-                  } else {
-                    _calendarView = CalendarView.week;
-                  }
-                  _calendarController.view = _calendarView;
-                });
-              },
-              tooltip: 'Ansicht wechseln',
-            ),
-          ],
-          _buildProfileAvatarAction(),
+          IconButton(
+            icon: const Icon(Icons.tune),
+            onPressed: _showFilterDialog,
+            tooltip: 'Filter',
+          ),
+          IconButton(
+            icon: Icon(_calendarView == CalendarView.week ? Icons.calendar_month : Icons.view_week),
+            onPressed: () {
+              setState(() {
+                if (_calendarView == CalendarView.week) {
+                  _calendarView = CalendarView.month;
+                } else {
+                  _calendarView = CalendarView.week;
+                }
+                _calendarController.view = _calendarView;
+              });
+            },
+            tooltip: 'Ansicht wechseln',
+          ),
         ],
       ),
       drawer: Drawer(
@@ -3098,18 +2231,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             ),
           ),
           
-          // ─── VIEW SWITCHER: [ 📊 Dashboard | 📅 Kalender ] ───
-          _buildViewSwitcher(),
-
-          // ─── HAUPTINHALT (Dashboard oder Kalender) ───
+          // ─── KALENDER ───
           Expanded(
             child: FutureBuilder<List<ScheduledEvent>>(
               future: _eventsFuture,
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting && _rawSlots.isEmpty) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                if (snapshot.hasError && _rawSlots.isEmpty) {
+                if (snapshot.hasError) {
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24.0),
@@ -3119,7 +2249,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                           const Icon(Icons.cloud_off, size: 48, color: Colors.orange),
                           const SizedBox(height: 12),
                           const Text(
-                            'Daten konnten nicht geladen werden',
+                            'Kalender konnte nicht geladen werden',
                             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                             textAlign: TextAlign.center,
                           ),
@@ -3143,124 +2273,118 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
                 final events = snapshot.data ?? [];
 
-                return _selectedTab == 0
-                    ? _buildDashboardView()
-                    : _buildCalendarView(events);
+                return Column(
+                  children: [
+                    if (!_showSlots && _countSlots > 0)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        color: Colors.amber.shade900.withOpacity(0.92),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.filter_alt_off, color: Colors.white, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Schichten-Filter ist deaktiviert ($_countSlots Schichten vorhanden)',
+                                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            TextButton(
+                              style: TextButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.black87,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _showSlots = true;
+                                  if (_persistFilters) _savePreferences();
+                                  _refreshEvents();
+                                });
+                              },
+                              child: const Text('Einblenden', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    Expanded(
+                      child: SfCalendar(
+                        view: _calendarView,
+                        controller: _calendarController,
+                        dataSource: EventDataSource(events),
+                        firstDayOfWeek: 1,
+                        timeSlotViewSettings: const TimeSlotViewSettings(
+                          startHour: 5,
+                          endHour: 24,
+                          timeFormat: 'HH:mm',
+                          timeIntervalHeight: 60,
+                        ),
+                        monthViewSettings: const MonthViewSettings(
+                          appointmentDisplayMode: MonthAppointmentDisplayMode.appointment,
+                          appointmentDisplayCount: 3,
+                          monthCellStyle: MonthCellStyle(),
+                          showAgenda: true,
+                          agendaViewHeight: 160,
+                        ),
+                        onTap: (CalendarTapDetails details) {
+                          if (details.appointments != null && details.appointments!.isNotEmpty) {
+                            if (details.targetElement == CalendarElement.appointment) {
+                              final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
+                              _showEventDetails(event);
+                            } else if (details.targetElement == CalendarElement.calendarCell) {
+                              if (details.appointments!.length == 1) {
+                                final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
+                                _showEventDetails(event);
+                              }
+                            }
+                          }
+                        },
+                        appointmentBuilder: (context, calendarAppointmentDetails) {
+                          final ScheduledEvent event = calendarAppointmentDetails.appointments.first;
+                          final isMonthView = _calendarView == CalendarView.month;
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: event.background.withOpacity(0.9),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                            child: isMonthView
+                                ? Text(
+                                    event.title,
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  )
+                                : Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        event.title,
+                                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      if (event.subtitle != null)
+                                        Text(
+                                          event.subtitle!,
+                                          style: const TextStyle(color: Colors.white70, fontSize: 10),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                  ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
               },
             ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildCalendarView(List<ScheduledEvent> events) {
-    return Column(
-      children: [
-        if (!_showSlots && _countSlots > 0)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            color: Colors.amber.shade900.withOpacity(0.92),
-            child: Row(
-              children: [
-                const Icon(Icons.filter_alt_off, color: Colors.white, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Schichten-Filter ist deaktiviert ($_countSlots Schichten vorhanden)',
-                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
-                  ),
-                ),
-                TextButton(
-                  style: TextButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.black87,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _showSlots = true;
-                      if (_persistFilters) _savePreferences();
-                      _refreshEvents();
-                    });
-                  },
-                  child: const Text('Einblenden', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                ),
-              ],
-            ),
-          ),
-        Expanded(
-          child: SfCalendar(
-            view: _calendarView,
-            controller: _calendarController,
-            dataSource: EventDataSource(events),
-            firstDayOfWeek: 1,
-            timeSlotViewSettings: const TimeSlotViewSettings(
-              startHour: 5,
-              endHour: 24,
-              timeFormat: 'HH:mm',
-              timeIntervalHeight: 60,
-            ),
-            monthViewSettings: const MonthViewSettings(
-              appointmentDisplayMode: MonthAppointmentDisplayMode.appointment,
-              appointmentDisplayCount: 3,
-              monthCellStyle: MonthCellStyle(),
-              showAgenda: true,
-              agendaViewHeight: 160,
-            ),
-            onTap: (CalendarTapDetails details) {
-              if (details.appointments != null && details.appointments!.isNotEmpty) {
-                if (details.targetElement == CalendarElement.appointment) {
-                  final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
-                  _showEventDetails(event);
-                } else if (details.targetElement == CalendarElement.calendarCell) {
-                  if (details.appointments!.length == 1) {
-                    final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
-                    _showEventDetails(event);
-                  }
-                }
-              }
-            },
-            appointmentBuilder: (context, calendarAppointmentDetails) {
-              final ScheduledEvent event = calendarAppointmentDetails.appointments.first;
-              final isMonthView = _calendarView == CalendarView.month;
-              return Container(
-                decoration: BoxDecoration(
-                  color: event.background.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                child: isMonthView
-                    ? Text(
-                        event.title,
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            event.title,
-                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (event.subtitle != null)
-                            Text(
-                              event.subtitle!,
-                              style: const TextStyle(color: Colors.white70, fontSize: 10),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                        ],
-                      ),
-              );
-            },
-          ),
-        ),
-      ],
     );
   }
 }
