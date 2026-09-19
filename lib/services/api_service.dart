@@ -1571,9 +1571,9 @@ class ApiService {
     return [];
   }
 
-  Future<bool> sendChatMessage(String roomId, String text, {String? attachmentId}) async {
+  Future<ChatMessage?> sendChatMessage(String roomId, String text, {String? attachmentId}) async {
     final token = await _storageService.getToken();
-    if (token == null) return false;
+    if (token == null) return null;
     
     final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/sendMessage');
     try {
@@ -1587,14 +1587,16 @@ class ApiService {
         headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
         body: json.encode(bodyMap)
       );
-      if (response.statusCode != 200) {
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return ChatMessage.fromJson(data);
+      } else {
         debugPrint('sendChatMessage failed: ${response.statusCode} - ${response.body}');
       }
-      return response.statusCode == 200;
     } catch (e) {
       debugPrint('sendChatMessage exception: $e');
     }
-    return false;
+    return null;
   }
 
   Future<void> markChatRoomRead(String roomId) async {
@@ -1609,6 +1611,21 @@ class ApiService {
         body: json.encode({'chatRoomId': roomId})
       );
     } catch (_) {}
+  }
+
+  Future<int> getChatUnreadCount() async {
+    final token = await _storageService.getToken();
+    if (token == null) return 0;
+    
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getUnreadCount');
+    try {
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return (data['total'] as num?)?.toInt() ?? 0;
+      }
+    } catch (_) {}
+    return 0;
   }
 
 

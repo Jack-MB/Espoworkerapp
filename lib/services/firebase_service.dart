@@ -62,12 +62,27 @@ class FirebaseService {
 
         if (message.notification != null) {
           debugPrint('Message notification: ${message.notification?.title} - ${message.notification?.body}');
+          final entityType = message.data['relatedType'] ?? message.data['entityType'];
+          final entityId = message.data['relatedId'] ?? message.data['entityId'];
+          final payload = entityId != null ? '$entityType:$entityId' : entityType?.toString();
+
           NotificationService().showNotification(
             id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
             title: message.notification?.title ?? 'EspoCRM Benachrichtigung',
             body: message.notification?.body ?? '',
-            payload: message.data['entityType']?.toString(),
+            payload: payload,
           );
+        }
+      });
+
+      // Beim Klick auf eine Benachrichtigung im Hintergrund (App öffnet sich)
+      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+        debugPrint('Notification caused app to open from background: ${message.data}');
+        final entityType = message.data['relatedType'] ?? message.data['entityType'];
+        final entityId = message.data['relatedId'] ?? message.data['entityId'];
+        if (entityType != null) {
+          final payload = entityId != null ? '$entityType:$entityId' : entityType.toString();
+          NotificationService().handleExternalPayload(payload);
         }
       });
 

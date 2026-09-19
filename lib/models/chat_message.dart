@@ -9,6 +9,7 @@ class ChatMessage {
   final String? attachmentId;
   final String? attachmentName;
   final String? attachmentType;
+  final Map<String, dynamic>? replyTo;
 
   ChatMessage({
     required this.id,
@@ -21,6 +22,7 @@ class ChatMessage {
     this.attachmentId,
     this.attachmentName,
     this.attachmentType,
+    this.replyTo,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
@@ -35,6 +37,7 @@ class ChatMessage {
       attachmentId: json['attachmentId'] as String?,
       attachmentName: json['attachmentName'] as String?,
       attachmentType: json['attachmentType'] as String?,
+      replyTo: json['replyTo'] is Map<String, dynamic> ? json['replyTo'] as Map<String, dynamic> : null,
     );
   }
 }

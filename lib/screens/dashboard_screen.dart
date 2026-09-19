@@ -123,6 +123,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   String _username = '';
   String? _angestellteId;
   int _unreadCount = 0;
+  int _chatUnreadCount = 0;
   Angestellte? _angestellte;
   String? _authToken;
 
@@ -862,9 +863,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   Future<void> _fetchUnread() async {
     final count = await _apiService.getUnreadNotificationCount();
+    final chatCount = await _apiService.getChatUnreadCount();
     if (mounted) {
       setState(() {
         _unreadCount = count;
+        _chatUnreadCount = chatCount;
       });
     }
   }
@@ -1788,6 +1791,40 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             icon: Stack(
               clipBehavior: Clip.none,
               children: [
+                const Icon(Icons.chat_bubble_outline_rounded),
+                if (_chatUnreadCount > 0)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.all(Radius.circular(10)),
+                      ),
+                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        '$_chatUnreadCount',
+                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ChatListScreen()),
+              );
+              _fetchUnread();
+            },
+            tooltip: 'Chats',
+          ),
+          IconButton(
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
                 Icon(
                   _pushPermission == 'granted' ? Icons.phonelink_ring : Icons.notifications_paused_outlined,
                   color: _pushPermission == 'granted' ? Colors.white : Colors.amberAccent,
@@ -1987,9 +2024,27 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                     _buildDrawerItem(Icons.email, 'E-Mails', () {
                       Navigator.push(context, MaterialPageRoute(builder: (_) => const EmailListScreen()));
                     }),
-                  _buildDrawerItem(Icons.chat, 'Chat', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatListScreen()));
-                  }),
+                  _buildDrawerItem(
+                    Icons.chat_rounded,
+                    'Chat',
+                    () async {
+                      await Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatListScreen()));
+                      _fetchUnread();
+                    },
+                    trailing: _chatUnreadCount > 0
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade600,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '$_chatUnreadCount',
+                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          )
+                        : null,
+                  ),
                 ],
               ),
             ),

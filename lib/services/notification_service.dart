@@ -9,6 +9,7 @@ import '../screens/urlaub_screen.dart';
 import '../screens/krankentage_screen.dart';
 import '../screens/abwesenheit_screen.dart';
 import '../screens/meeting_list_screen.dart';
+import '../screens/chat_list_screen.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -117,11 +118,23 @@ class NotificationService {
     return false;
   }
 
+  void handleExternalPayload(String payload) {
+    _handleNotificationPayload(payload);
+  }
+
   void _handleNotificationPayload(String payload) {
     if (EspoWorkerApp.navigatorKey.currentState == null) return;
     
     Widget? target;
-    switch (payload) {
+    String entityType = payload;
+    String? entityId;
+    if (payload.contains(':')) {
+      final parts = payload.split(':');
+      entityType = parts[0];
+      entityId = parts.sublist(1).join(':');
+    }
+
+    switch (entityType) {
       case 'CWachbuch':
         target = const WachbuchListScreen();
         break;
@@ -140,6 +153,11 @@ class NotificationService {
         break;
       case 'Meeting':
         target = const MeetingListScreen();
+        break;
+      case 'ChatRoom':
+      case 'ChatMessage':
+      case 'Chat':
+        target = ChatListScreen(initialRoomId: entityId);
         break;
     }
 
