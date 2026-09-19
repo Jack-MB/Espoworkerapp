@@ -44,7 +44,13 @@ class _HttpWithTimeout {
 class ApiService {
   final SecureStorageService _storageService = SecureStorageService();
   static const String _cachedSlotsKey = 'cached_slots_payload_v1';
+  static const String _cachedSlotsMasterKey = 'cached_slots_master_map_v1';
   static const String _cachedWachbuchsKey = 'cached_wachbuchs_payload_v1';
+  static const String _cachedUrlaubKey = 'cached_urlaub_payload_v1';
+  static const String _cachedKrankKey = 'cached_krank_payload_v1';
+  static const String _cachedBereitschaftKey = 'cached_bereitschaft_payload_v1';
+  static const String _cachedAbwesenheitKey = 'cached_abwesenheit_payload_v1';
+  static const String _cachedMeetingsKey = 'cached_meetings_payload_v1';
   bool _isLastSlotsFromCache = false;
   bool get isLastSlotsFromCache => _isLastSlotsFromCache;
 
@@ -236,34 +242,53 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>?> getObjektCoordinates(String id) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Objekte/$id?select=latk,lonK,rad');
-    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      final latVal = data['latk'];
-      final lonVal = data['lonK'];
-      final radVal = data['rad'];
-      
-      if (latVal != null && lonVal != null) {
-        final lat = double.tryParse(latVal.toString().replaceAll(',', ''));
-        final lon = double.tryParse(lonVal.toString().replaceAll(',', ''));
+    final cacheKey = 'cached_objekt_coords_$id';
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Objekte/$id?select=latk,lonK,rad');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final latVal = data['latk'];
+        final lonVal = data['lonK'];
+        final radVal = data['rad'];
         
-        int parsedRad = 30;
-        if (radVal != null) {
-          // Robust parsing of integer with possible thousands separators (.)
-          final sanitizedRad = radVal.toString().replaceAll('.', '').replaceAll(',', '');
-          parsedRad = int.tryParse(sanitizedRad) ?? 30;
-        }
+        if (latVal != null && lonVal != null) {
+          final lat = double.tryParse(latVal.toString().replaceAll(',', ''));
+          final lon = double.tryParse(lonVal.toString().replaceAll(',', ''));
+          
+          int parsedRad = 30;
+          if (radVal != null) {
+            // Robust parsing of integer with possible thousands separators (.)
+            final sanitizedRad = radVal.toString().replaceAll('.', '').replaceAll(',', '');
+            parsedRad = int.tryParse(sanitizedRad) ?? 30;
+          }
 
-        if (lat != null && lon != null) {
-          return {
-            'latk': lat, 
-            'lonK': lon,
-            'rad': parsedRad,
-          };
+          if (lat != null && lon != null) {
+            final result = {
+              'latk': lat, 
+              'lonK': lon,
+              'rad': parsedRad,
+            };
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString(cacheKey, json.encode(result));
+            } catch (_) {}
+            return result;
+          }
         }
       }
+    } catch (e) {
+      debugPrint('getObjektCoordinates error: $e, checking offline cache');
     }
+
+    // Offline cache fallback
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedStr = prefs.getString(cacheKey);
+      if (cachedStr != null && cachedStr.isNotEmpty) {
+        return Map<String, dynamic>.from(json.decode(cachedStr));
+      }
+    } catch (_) {}
     return null;
   }
 
@@ -641,10 +666,26 @@ class ApiService {
           _isLastSlotsFromCache = false;
           try {
             final prefs = await SharedPreferences.getInstance();
+            // 1. Update legacy single-request cache
             await prefs.setString(_cachedSlotsKey, response.body);
             await prefs.setString('${_cachedSlotsKey}_time', DateTime.now().toIso8601String());
+
+            // 2. Merge into master slot map (prevents narrow date queries from wiping out cache)
+            final String? masterJson = prefs.getString(_cachedSlotsMasterKey);
+            Map<String, dynamic> masterMap = {};
+            if (masterJson != null && masterJson.isNotEmpty) {
+              try {
+                masterMap = Map<String, dynamic>.from(json.decode(masterJson));
+              } catch (_) {}
+            }
+            for (var item in data['list']) {
+              if (item is Map && item['id'] != null) {
+                masterMap[item['id'].toString()] = item;
+              }
+            }
+            await prefs.setString(_cachedSlotsMasterKey, json.encode(masterMap));
           } catch (e) {
-            debugPrint('Error saving slots cache: $e');
+            debugPrint('Error saving slots master cache: $e');
           }
           return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
         }
@@ -653,23 +694,82 @@ class ApiService {
       debugPrint('Network error in getSlots: $e. Falling back to offline cache.');
     }
 
-    // Offline cache fallback
+    // Offline cache fallback using master map
     try {
       final prefs = await SharedPreferences.getInstance();
-      final cachedJson = prefs.getString(_cachedSlotsKey);
-      if (cachedJson != null && cachedJson.isNotEmpty) {
-        final data = json.decode(cachedJson);
-        if (data['list'] != null) {
-          _isLastSlotsFromCache = true;
-          debugPrint('Serving ${data['list'].length} slots from offline cache');
-          return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+      final masterJson = prefs.getString(_cachedSlotsMasterKey);
+      List<Slot> allCached = [];
+
+      if (masterJson != null && masterJson.isNotEmpty) {
+        final Map<String, dynamic> masterMap = json.decode(masterJson);
+        allCached = masterMap.values.map((e) => Slot.fromJson(e as Map<String, dynamic>)).toList();
+      }
+
+      // If master map was empty, check legacy cache key
+      if (allCached.isEmpty) {
+        final cachedJson = prefs.getString(_cachedSlotsKey);
+        if (cachedJson != null && cachedJson.isNotEmpty) {
+          final data = json.decode(cachedJson);
+          if (data['list'] != null) {
+            allCached = (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+          }
         }
+      }
+
+      if (allCached.isNotEmpty) {
+        _isLastSlotsFromCache = true;
+        // If specific start & end dates were requested, filter cached results
+        if (startDate != null || endDate != null) {
+          final filtered = allCached.where((s) {
+            if (s.dateStart == null) return false;
+            try {
+              final sDate = DateTime.parse(s.dateStart!.contains(' ') ? s.dateStart!.split(' ')[0] : s.dateStart!);
+              if (startDate != null && sDate.isBefore(DateTime(startDate.year, startDate.month, startDate.day))) {
+                return false;
+              }
+              if (endDate != null && sDate.isAfter(DateTime(endDate.year, endDate.month, endDate.day))) {
+                return false;
+              }
+              return true;
+            } catch (_) {
+              return true;
+            }
+          }).toList();
+
+          if (filtered.isNotEmpty) {
+            debugPrint('Serving ${filtered.length} filtered slots from offline cache');
+            return filtered;
+          }
+        }
+        // Fallback: Return all cached slots so user is never left with an empty screen offline
+        debugPrint('Serving ${allCached.length} total slots from offline master cache');
+        return allCached;
       }
     } catch (cacheErr) {
       debugPrint('Error reading slots cache: $cacheErr');
     }
 
-    return [];
+    return <Slot>[];
+  }
+
+  /// Returns all cached slots regardless of filter, useful for offline views
+  Future<List<Slot>> getAllCachedSlots() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final masterJson = prefs.getString(_cachedSlotsMasterKey);
+      if (masterJson != null && masterJson.isNotEmpty) {
+        final Map<String, dynamic> masterMap = json.decode(masterJson);
+        return masterMap.values.map((e) => Slot.fromJson(e as Map<String, dynamic>)).toList();
+      }
+      final cachedJson = prefs.getString(_cachedSlotsKey);
+      if (cachedJson != null && cachedJson.isNotEmpty) {
+        final data = json.decode(cachedJson);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return <Slot>[];
   }
 
   Future<List<Note>> getWachbuchNotes(String wachbuchId) async {
@@ -781,50 +881,106 @@ class ApiService {
   }
 
   Future<List<Urlaub>> getUrlaubs() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/CUrlaube?maxSize=100&orderBy=createdAt&order=desc');
-    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['list'] != null) {
-        return (data['list'] as List).map((e) => Urlaub.fromJson(e)).toList();
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/CUrlaube?maxSize=100&orderBy=createdAt&order=desc');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_cachedUrlaubKey, response.body);
+          } catch (_) {}
+          return (data['list'] as List).map((e) => Urlaub.fromJson(e)).toList();
+        }
       }
+    } catch (e) {
+      debugPrint('getUrlaubs error: $e, falling back to cache');
     }
-    return [];
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_cachedUrlaubKey);
+      if (cached != null && cached.isNotEmpty) {
+        final data = json.decode(cached);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Urlaub.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return <Urlaub>[];
   }
 
   Future<List<Krankentage>> getKrankentage() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/CKrankenscheine?maxSize=100&orderBy=createdAt&order=desc');
-    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['list'] != null) {
-        return (data['list'] as List).map((e) => Krankentage.fromJson(e)).toList();
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/CKrankenscheine?maxSize=100&orderBy=createdAt&order=desc');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_cachedKrankKey, response.body);
+          } catch (_) {}
+          return (data['list'] as List).map((e) => Krankentage.fromJson(e)).toList();
+        }
       }
+    } catch (e) {
+      debugPrint('getKrankentage error: $e, falling back to cache');
     }
-    return [];
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_cachedKrankKey);
+      if (cached != null && cached.isNotEmpty) {
+        final data = json.decode(cached);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Krankentage.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return <Krankentage>[];
   }
 
   Future<List<Bereitschaft>> getBereitschaften() async {
-    // Bereitschaften der letzten 30 Tage bis zu den nächsten 180 Tagen laden
-    final now = DateTime.now();
-    final from = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 30));
-    final to = now.add(const Duration(days: 180));
-    final fromStr = '${from.year.toString().padLeft(4, '0')}-${from.month.toString().padLeft(2, '0')}-${from.day.toString().padLeft(2, '0')}';
-    final toStr = '${to.year.toString().padLeft(4, '0')}-${to.month.toString().padLeft(2, '0')}-${to.day.toString().padLeft(2, '0')}';
-    final url = Uri.parse(
-      '${ServerConfig().apiUrl}/CBereitschaft?maxSize=200'
-      '&where%5B0%5D%5Btype%5D=greaterThanOrEquals&where%5B0%5D%5Battribute%5D=dateStart&where%5B0%5D%5Bvalue%5D=$fromStr'
-      '&where%5B1%5D%5Btype%5D=lessThanOrEquals&where%5B1%5D%5Battribute%5D=dateStart&where%5B1%5D%5Bvalue%5D=$toStr'
-      '&orderBy=dateStart&order=asc',
-    );
-    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['list'] != null) {
-        return (data['list'] as List).map((e) => Bereitschaft.fromJson(e)).toList();
+    try {
+      final now = DateTime.now();
+      final from = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 30));
+      final to = now.add(const Duration(days: 180));
+      final fromStr = '${from.year.toString().padLeft(4, '0')}-${from.month.toString().padLeft(2, '0')}-${from.day.toString().padLeft(2, '0')}';
+      final toStr = '${to.year.toString().padLeft(4, '0')}-${to.month.toString().padLeft(2, '0')}-${to.day.toString().padLeft(2, '0')}';
+      final url = Uri.parse(
+        '${ServerConfig().apiUrl}/CBereitschaft?maxSize=200'
+        '&where%5B0%5D%5Btype%5D=greaterThanOrEquals&where%5B0%5D%5Battribute%5D=dateStart&where%5B0%5D%5Bvalue%5D=$fromStr'
+        '&where%5B1%5D%5Btype%5D=lessThanOrEquals&where%5B1%5D%5Battribute%5D=dateStart&where%5B1%5D%5Bvalue%5D=$toStr'
+        '&orderBy=dateStart&order=asc',
+      );
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_cachedBereitschaftKey, response.body);
+          } catch (_) {}
+          return (data['list'] as List).map((e) => Bereitschaft.fromJson(e)).toList();
+        }
       }
+    } catch (e) {
+      debugPrint('getBereitschaften error: $e, falling back to cache');
     }
-    return [];
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_cachedBereitschaftKey);
+      if (cached != null && cached.isNotEmpty) {
+        final data = json.decode(cached);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Bereitschaft.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return <Bereitschaft>[];
   }
 
   /// Resolves and caches the Angestellte record linked to the current user
@@ -1001,10 +1157,32 @@ class ApiService {
   }
 
   Future<Angestellte?> getAngestellteById(String id) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$id');
-    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      return Angestellte.fromJson(json.decode(response.body));
+    final cacheKey = 'cached_angestellte_$id';
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$id');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(cacheKey, response.body);
+        } catch (_) {}
+        return Angestellte.fromJson(data);
+      }
+    } catch (e) {
+      debugPrint('getAngestellteById error: $e, falling back to offline cache');
+    }
+
+    // Offline cache fallback
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedJson = prefs.getString(cacheKey);
+      if (cachedJson != null && cachedJson.isNotEmpty) {
+        debugPrint('Serving Angestellte $id from offline cache');
+        return Angestellte.fromJson(json.decode(cachedJson));
+      }
+    } catch (cacheErr) {
+      debugPrint('Error reading Angestellte cache: $cacheErr');
     }
     return null;
   }
@@ -1088,15 +1266,34 @@ class ApiService {
   }
 
   Future<List<Abwesenheit>> getAbwesenheiten() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotizen?maxSize=100&orderBy=dateStart&order=desc');
-    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['list'] != null) {
-        return (data['list'] as List).map((e) => Abwesenheit.fromJson(e)).toList();
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotizen?maxSize=100&orderBy=dateStart&order=desc');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_cachedAbwesenheitKey, response.body);
+          } catch (_) {}
+          return (data['list'] as List).map((e) => Abwesenheit.fromJson(e)).toList();
+        }
       }
+    } catch (e) {
+      debugPrint('getAbwesenheiten error: $e, falling back to cache');
     }
-    return [];
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_cachedAbwesenheitKey);
+      if (cached != null && cached.isNotEmpty) {
+        final data = json.decode(cached);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Abwesenheit.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return <Abwesenheit>[];
   }
 
   Future<bool> createAbwesenheit({
@@ -1129,15 +1326,34 @@ class ApiService {
   }
 
   Future<List<Meeting>> getMeetings() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Meeting?maxSize=50&orderBy=dateStart&order=desc');
-    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['list'] != null) {
-        return (data['list'] as List).map((e) => Meeting.fromJson(e)).toList();
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Meeting?maxSize=50&orderBy=dateStart&order=desc');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_cachedMeetingsKey, response.body);
+          } catch (_) {}
+          return (data['list'] as List).map((e) => Meeting.fromJson(e)).toList();
+        }
       }
+    } catch (e) {
+      debugPrint('getMeetings error: $e, falling back to cache');
     }
-    return [];
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_cachedMeetingsKey);
+      if (cached != null && cached.isNotEmpty) {
+        final data = json.decode(cached);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Meeting.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return <Meeting>[];
   }
 
   Future<Meeting?> getMeetingById(String id) async {

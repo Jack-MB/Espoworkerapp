@@ -263,10 +263,18 @@ class _SlotsScreenState extends State<SlotsScreen> {
   Future<void> _loadSlots() async {
     setState(() => _isLoading = true);
     // Respect the currently selected date range on refresh to prevent clearing custom fetches
-    final slots = await _apiService.getSlots(
+    var slots = await _apiService.getSlots(
       startDate: _selectedDateRange?.start,
       endDate: _selectedDateRange?.end,
     );
+    
+    // If offline and 0 slots returned for the requested range, fallback to all cached slots
+    if (slots.isEmpty && _apiService.isLastSlotsFromCache) {
+      final allCached = await _apiService.getAllCachedSlots();
+      if (allCached.isNotEmpty) {
+        slots = allCached;
+      }
+    }
     
     // Extract unique filter options
     final angestellteSet = <String>{};
@@ -497,18 +505,20 @@ class _SlotsScreenState extends State<SlotsScreen> {
         return true;
       }
 
-      // GPS Koordinaten kommen laut User-Info immer über das Objekt
-      final coords = await _apiService.getObjektCoordinates(slot.objekteId!);
-      if (coords == null) {
-        debugPrint('Keine Koordinaten im Objekt hinterlegt - überspringe GPS-Check');
-        return true;
+      // GPS Koordinaten kommen über das Objekt oder direkt aus der Schicht
+      Map<String, dynamic>? coords;
+      if (slot.objekteId != null) {
+        coords = await _apiService.getObjektCoordinates(slot.objekteId!);
       }
 
-      final double targetLat = coords['latk'] ?? 0;
-      final double targetLon = coords['lonK'] ?? 0;
-      final int allowedRadius = coords['rad'] ?? 30;
+      final double targetLat = coords?['latk'] ?? slot.latk ?? 0.0;
+      final double targetLon = coords?['lonK'] ?? slot.lonK ?? 0.0;
+      final int allowedRadius = coords?['rad'] ?? 30;
 
-      if (targetLat == 0 || targetLon == 0) return true;
+      if (targetLat == 0 || targetLon == 0) {
+        debugPrint('Keine Zielkoordinaten im Objekt oder Slot hinterlegt - überspringe GPS-Check');
+        return true;
+      }
 
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
@@ -594,6 +604,10 @@ class _SlotsScreenState extends State<SlotsScreen> {
       return true;
     } catch (e) {
       debugPrint('GPS Error: $e');
+      if (_isOfflineData) {
+        debugPrint('Offline GPS: Standortfehler im Offline-Modus – erlaube Check-In für spätere Synchronisation');
+        return true;
+      }
       _showError('GPS-Fehler: Der Standort konnte nicht ermittelt werden.');
       return false;
     }
@@ -729,6 +743,8 @@ class _SlotsScreenState extends State<SlotsScreen> {
               duration: Duration(seconds: 1),
             ),
           );
+        } else if (!success) {
+          throw Exception('Übertragung nicht erfolgreich, wird in Offline-Queue eingereiht');
         }
       } catch (e) {
         debugPrint('Sync Error: $e – Queuing for retry...');
@@ -928,7 +944,83 @@ class _SlotsScreenState extends State<SlotsScreen> {
     }
   }
 
+  Widget _buildEmptySlotsView() {
+    if (_isOfflineData && _allSlots.isNotEmpty) {
+      return Center(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.event_busy, size: 56, color: Colors.orange),
+                const SizedBox(height: 16),
+                const Text(
+                  'Keine Schichten im gewählten Filter',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Auf diesem Gerät sind ${_allSlots.length} zwischengespeicherte Schichten für andere Tage verfügbar.',
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  onPressed: _clearFilters,
+                  icon: const Icon(Icons.filter_alt_off, size: 18),
+                  label: Text('Alle ${_allSlots.length} Offline-Schichten anzeigen'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
+    if (_isOfflineData && _allSlots.isEmpty) {
+      return Center(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.cloud_off, size: 56, color: Colors.grey),
+                const SizedBox(height: 16),
+                const Text(
+                  'Keine Offline-Schichten',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Im lokalen Gerätespeicher wurden keine Schichten gefunden. Bitte öffnen Sie die Schichten einmalig mit Internetverbindung.',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: _loadSlots,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Erneut versuchen'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return const Center(child: Text('Keine Schichten gefunden.'));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1116,7 +1208,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _filteredSlots.isEmpty
-                    ? const Center(child: Text('Keine Schichten gefunden.'))
+                    ? _buildEmptySlotsView()
                     : RefreshIndicator(
                         onRefresh: _loadSlots,
                         child: ListView.builder(

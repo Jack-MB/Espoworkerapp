@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../services/secure_storage_service.dart';
 import '../models/angestellte.dart';
@@ -19,6 +21,7 @@ class _AngestellteProfileScreenState extends State<AngestellteProfileScreen> {
   final SecureStorageService _storage = SecureStorageService();
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isOffline = false;
   Angestellte? _angestellte;
   String? _authToken;
   
@@ -96,32 +99,61 @@ class _AngestellteProfileScreenState extends State<AngestellteProfileScreen> {
   }
 
   Future<void> _loadProfile() async {
-    final tokenUrlPrefix = await _storage.getToken();
-    final data = await _apiService.getAngestellteById(widget.angestellteId);
-    if (data != null && mounted) {
-      setState(() {
-        _angestellte = data;
-        _isLoading = false;
-        if (tokenUrlPrefix != null) {
-          _authToken = tokenUrlPrefix;
-        }
-      });
-      
-      // Init controllers
-      for (final key in data.rawData.keys) {
-        final def = AngestellteFields.definitions[key];
-        if (def != null) {
-          final type = def['type'] as String;
-          if (_isTextType(type)) {
-            _controllers[key] = TextEditingController(text: data.rawData[key]?.toString() ?? '');
+    setState(() => _isLoading = true);
+    try {
+      final tokenUrlPrefix = await _storage.getToken();
+      if (tokenUrlPrefix != null && mounted) {
+        setState(() => _authToken = tokenUrlPrefix);
+      }
+
+      final data = await _apiService.getAngestellteById(widget.angestellteId);
+      if (data != null && mounted) {
+        setState(() {
+          _angestellte = data;
+          _isOffline = false;
+        });
+        
+        // Init controllers
+        for (final key in data.rawData.keys) {
+          final def = AngestellteFields.definitions[key];
+          if (def != null) {
+            final type = def['type'] as String;
+            if (_isTextType(type)) {
+              _controllers[key] = TextEditingController(text: data.rawData[key]?.toString() ?? '');
+            }
           }
         }
+      } else {
+        // Fallback: Check local SharedPreferences cache
+        final prefs = await SharedPreferences.getInstance();
+        final cached = prefs.getString('cached_angestellte_${widget.angestellteId}');
+        if (cached != null && cached.isNotEmpty && mounted) {
+          final cachedData = Angestellte.fromJson(json.decode(cached));
+          setState(() {
+            _angestellte = cachedData;
+            _isOffline = true;
+          });
+          for (final key in cachedData.rawData.keys) {
+            final def = AngestellteFields.definitions[key];
+            if (def != null) {
+              final type = def['type'] as String;
+              if (_isTextType(type)) {
+                _controllers[key] = TextEditingController(text: cachedData.rawData[key]?.toString() ?? '');
+              }
+            }
+          }
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Profil konnte nicht vom Server geladen werden.')),
+          );
+        }
       }
-    } else if (mounted) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Fehler beim Laden des Profils.')),
-      );
+    } catch (e) {
+      debugPrint('Error loading Angestellte profile: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -366,7 +398,35 @@ class _AngestellteProfileScreenState extends State<AngestellteProfileScreen> {
     if (_angestellte == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Profil')),
-        body: const Center(child: Text('Fehler beim Laden.')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.person_off_outlined, size: 64, color: Colors.grey),
+                const SizedBox(height: 16),
+                const Text(
+                  'Profil konnte nicht geladen werden',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Es sind keine lokalen Profildaten gespeichert und der Server ist derzeit nicht erreichbar.',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: _loadProfile,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Erneut versuchen'),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
@@ -424,17 +484,45 @@ class _AngestellteProfileScreenState extends State<AngestellteProfileScreen> {
               padding: EdgeInsets.all(16),
               child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
             )
-          else
+          else if (!_isOffline)
             IconButton(
               icon: const Icon(Icons.save),
               onPressed: _saveProfile,
               tooltip: 'Speichern',
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.cloud_off, color: Colors.white60),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Bearbeitung im Offline-Modus nicht möglich.')),
+                );
+              },
+              tooltip: 'Offline (Speichern deaktiviert)',
             ),
         ],
       ),
       body: SingleChildScrollView(
         child: Column(
           children: [
+            if (_isOffline)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                color: Colors.amber.shade800,
+                child: const Row(
+                  children: [
+                    Icon(Icons.cloud_off, size: 18, color: Colors.white),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Offline-Modus: Gespeichertes Profil wird angezeigt.',
+                        style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 24),
             // Header with Photo
             Center(

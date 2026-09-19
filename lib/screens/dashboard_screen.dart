@@ -184,21 +184,25 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   Future<void> _initializeDashboard() async {
-    await _loadPreferences();
-    await _loadLocalCheckins();
-    await _checkServerStatus();
-    await _loadUser();
-    await _fetchUnread();
-    await _loadUpcomingBirthdays();
-    
-    if (mounted) {
-      setState(() {
-        _isInitialized = true;
-      });
-      // Start fetching calendar events only after core services are ready
-      _refreshEvents();
-      // Admin banner
-      _loadAdminBanner();
+    try {
+      await _loadPreferences();
+      await _loadLocalCheckins();
+      await _checkServerStatus();
+      await _loadUser();
+      await _fetchUnread();
+      await _loadUpcomingBirthdays();
+    } catch (e) {
+      debugPrint('Dashboard: Error during initialization: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+        // Start fetching calendar events only after core services are ready
+        _refreshEvents();
+        // Admin banner
+        _loadAdminBanner();
+      }
     }
   }
 
@@ -873,28 +877,40 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   Future<void> _loadUser() async {
-    await _aclService.init();
-    final aName = await _storage.getAngestellteName();
-    final uName = await _storage.getUsername();
-    final name = aName ?? uName ?? 'Unbekannt';
-    final aId = await _storage.getAngestellteId();
-    final token = await _storage.getToken();
-    
-    if (mounted) {
-      setState(() {
-        _username = name;
-        _angestellteId = aId;
-        _authToken = token;
-      });
-    }
+    try {
+      await _aclService.init();
+      final aName = await _storage.getAngestellteName();
+      final uName = await _storage.getUsername();
+      final name = aName ?? uName ?? 'Unbekannt';
+      var aId = await _storage.getAngestellteId();
+      final token = await _storage.getToken();
 
-    if (aId != null) {
-      final data = await _apiService.getAngestellteById(aId);
-      if (mounted && data != null) {
+      // If angestellteId is missing, attempt auto-resolution
+      if (aId == null || aId.isEmpty) {
+        try {
+          await _apiService.resolveCurrentUserAngestellte();
+          aId = await _storage.getAngestellteId();
+        } catch (_) {}
+      }
+
+      if (mounted) {
         setState(() {
-          _angestellte = data;
+          _username = name;
+          _angestellteId = aId;
+          _authToken = token;
         });
       }
+
+      if (aId != null && aId.isNotEmpty) {
+        final data = await _apiService.getAngestellteById(aId);
+        if (mounted && data != null) {
+          setState(() {
+            _angestellte = data;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Dashboard: _loadUser error: $e');
     }
   }
 
@@ -912,12 +928,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         _apiService.getBereitschaften().catchError((_) => <Bereitschaft>[]),
       ]).timeout(const Duration(seconds: 15));
 
-      final allSlots = (results[0] as List<Slot>?) ?? [];
-      final allUrlaubs = (results[1] as List<Urlaub>?) ?? [];
-      final allKrankentage = (results[2] as List<Krankentage>?) ?? [];
-      final allAbwesenheiten = (results[3] as List<Abwesenheit>?) ?? [];
-      final allMeetings = (results[4] as List<Meeting>?) ?? [];
-      final allBereitschaften = (results[5] as List<Bereitschaft>?) ?? [];
+      final allSlots = (results[0] is List) ? (results[0] as List).whereType<Slot>().toList() : <Slot>[];
+      final allUrlaubs = (results[1] is List) ? (results[1] as List).whereType<Urlaub>().toList() : <Urlaub>[];
+      final allKrankentage = (results[2] is List) ? (results[2] as List).whereType<Krankentage>().toList() : <Krankentage>[];
+      final allAbwesenheiten = (results[3] is List) ? (results[3] as List).whereType<Abwesenheit>().toList() : <Abwesenheit>[];
+      final allMeetings = (results[4] is List) ? (results[4] as List).whereType<Meeting>().toList() : <Meeting>[];
+      final allBereitschaften = (results[5] is List) ? (results[5] as List).whereType<Bereitschaft>().toList() : <Bereitschaft>[];
 
       _countSlots = allSlots.length;
       _countUrlaub = allUrlaubs.length;
@@ -2213,7 +2229,35 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return Center(child: Text('Fehler beim Laden des Kalenders: \${snapshot.error}'));
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.cloud_off, size: 48, color: Colors.orange),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Kalender konnte nicht geladen werden',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${snapshot.error}',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: _refreshEvents,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Erneut versuchen'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
                 }
 
                 final events = snapshot.data ?? [];
