@@ -8,18 +8,18 @@ class AclService {
   final SecureStorageService _storage = SecureStorageService();
   Map<String, dynamic>? _aclCache;
   bool _isAdmin = false;
-  static const bool isAdminApp =
-      bool.fromEnvironment('IS_ADMIN_APP', defaultValue: false);
+  bool _isAppManager = false;
 
   Future<void> init() async {
     _aclCache = await _storage.getAcl();
     _isAdmin = await _storage.getIsAdmin();
+    _isAppManager = await _storage.getIsAppManager();
   }
 
-  /// Refreshes the cache from storage
   Future<void> refresh() async {
     _aclCache = await _storage.getAcl();
     _isAdmin = await _storage.getIsAdmin();
+    _isAppManager = await _storage.getIsAppManager();
   }
 
   /// Returns the value of a named permission level (e.g. 'schichtAnnahme').
@@ -30,10 +30,35 @@ class AclService {
 
     if (_aclCache == null) return null;
 
-    // EspoCRM sends: { "schichtAnnahmePermission": "yes", ... }
-    final key = '${permissionName}Permission';
-    final value = _aclCache![key];
-    if (value != null) return value.toString();
+    // 1. Direct match
+    if (_aclCache!.containsKey(permissionName)) {
+      return _aclCache![permissionName]?.toString();
+    }
+
+    // 2. With "Permission" suffix (e.g. schichtAnnahme -> schichtAnnahmePermission)
+    final keyWithPerm = '${permissionName}Permission';
+    if (_aclCache!.containsKey(keyWithPerm)) {
+      return _aclCache![keyWithPerm]?.toString();
+    }
+
+    // 3. Without "Permission" suffix (e.g. schichtAnnahmePermission -> schichtAnnahme)
+    if (permissionName.endsWith('Permission')) {
+      final keyWithout = permissionName.substring(0, permissionName.length - 10);
+      if (_aclCache!.containsKey(keyWithout)) {
+        return _aclCache![keyWithout]?.toString();
+      }
+    }
+
+    // 4. Case-insensitive fallback
+    final lower = permissionName.toLowerCase();
+    for (final entry in _aclCache!.entries) {
+      final entryLower = entry.key.toLowerCase();
+      if (entryLower == lower ||
+          entryLower == '${lower}permission' ||
+          (lower.endsWith('permission') && entryLower == lower.substring(0, lower.length - 10))) {
+        return entry.value?.toString();
+      }
+    }
 
     return null;
   }
@@ -45,7 +70,9 @@ class AclService {
   }
 
   /// Schicht-Annahme: darf der Benutzer Schichten annehmen/ablehnen?
-  bool get canAcceptShifts => hasValuePermission('schichtAnnahme');
+  bool get canAcceptShifts =>
+      hasValuePermission('schichtAnnahmePermission') ||
+      hasValuePermission('schichtAnnahme');
 
   /// Vorplanung: darf der Benutzer den Planungsvorschlag starten?
   bool get canStartPlanung => hasValuePermission('planungsvorschlag');
@@ -93,7 +120,10 @@ class AclService {
   /// Whether the current USER is marked as an admin on the EspoCRM server.
   bool get isAdmin => _isAdmin;
 
+  /// Whether the user has App Manager privileges (either explicitly set or via Admin).
+  bool get isAppManager => _isAdmin || _isAppManager;
+
   /// Whether the user is allowed to use THIS specific app build (Flavor).
-  /// If this is the Admin App build, the user MUST be a server-side admin.
-  bool get isAuthorized => !isAdminApp || _isAdmin;
+  /// Everyone is authorized in the unified app.
+  bool get isAuthorized => true;
 }

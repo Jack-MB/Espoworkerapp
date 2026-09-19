@@ -37,7 +37,7 @@ class Meeting {
       status: json['status'] ?? 'Planned',
       dateStart: json['dateStart'],
       dateEnd: json['dateEnd'],
-      duration: json['duration'],
+      duration: _parseInt(json['duration']),
       description: json['description'],
       parentId: json['parentId'],
       parentType: json['parentType'],
@@ -48,6 +48,14 @@ class Meeting {
         ? (json['users'] as List).map((e) => Attendee.fromJson(e, 'User')).toList()
         : null,
     );
+  }
+
+  static int? _parseInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 
   Map<String, dynamic> toJson() {

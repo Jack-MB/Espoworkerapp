@@ -48,7 +48,7 @@ class _PushSettingsSheetState extends State<PushSettingsSheet> {
     bool granted = false;
     String? token;
 
-    if (!kIsWeb && Platform.isAndroid) {
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
       granted = await NotificationService().areNotificationsEnabled();
       token = await FirebaseService().getStoredOrCurrentToken();
     } else if (kIsWeb) {
@@ -81,7 +81,6 @@ class _PushSettingsSheetState extends State<PushSettingsSheet> {
         token = await FirebaseService().requestPermissionAndSyncToken();
       } else if (kIsWeb) {
         await WebPushService().initWebPush();
-        await ApiService().syncFcmToken();
         token = await SecureStorageService().read('fcm_token');
         if (token == null || token.isEmpty) {
           throw Exception('WebPush konnte keinen Token anfordern.');
@@ -289,8 +288,12 @@ class _PushSettingsSheetState extends State<PushSettingsSheet> {
                                 const SizedBox(height: 2),
                                 Text(
                                   _systemPermissionGranted
-                                      ? 'In Android-Einstellungen erlaubt'
-                                      : 'In Android noch nicht erlaubt / blockiert',
+                                      ? (!kIsWeb && Platform.isIOS
+                                          ? 'In iOS-Mitteilungen erlaubt'
+                                          : 'In Android-Einstellungen erlaubt')
+                                      : (!kIsWeb && Platform.isIOS
+                                          ? 'In iOS noch nicht erlaubt / blockiert'
+                                          : 'In Android noch nicht erlaubt / blockiert'),
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: _systemPermissionGranted ? Colors.green : Colors.red,
@@ -302,13 +305,17 @@ class _PushSettingsSheetState extends State<PushSettingsSheet> {
                           ),
                         ],
                       ),
-                      if (!_systemPermissionGranted && !kIsWeb && Platform.isAndroid) ...[
+                      if (!_systemPermissionGranted && !kIsWeb && (Platform.isAndroid || Platform.isIOS)) ...[
                         const SizedBox(height: 10),
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton.icon(
                             onPressed: () async {
-                              await NotificationService().requestPermission();
+                              if (Platform.isIOS) {
+                                await FirebaseService().requestPermissionAndSyncToken();
+                              } else {
+                                await NotificationService().requestPermission();
+                              }
                               await _loadStatus();
                             },
                             icon: const Icon(Icons.notifications_active_outlined, size: 16),
@@ -512,7 +519,7 @@ class _PushSettingsSheetState extends State<PushSettingsSheet> {
                 ),
 
                 // Help Box if Permission Denied
-                if (!_systemPermissionGranted && !kIsWeb && Platform.isAndroid) ...[
+                if (!_systemPermissionGranted && !kIsWeb && (Platform.isAndroid || Platform.isIOS)) ...[
                   const SizedBox(height: 18),
                   Container(
                     padding: const EdgeInsets.all(14),
@@ -529,7 +536,9 @@ class _PushSettingsSheetState extends State<PushSettingsSheet> {
                             Icon(Icons.lightbulb_outline, size: 18, color: Colors.amber.shade900),
                             const SizedBox(width: 8),
                             Text(
-                              'So aktivierst du Benachrichtigungen in Android:',
+                              Platform.isIOS
+                                  ? 'So aktivierst du Mitteilungen auf dem iPhone:'
+                                  : 'So aktivierst du Benachrichtigungen in Android:',
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
@@ -540,10 +549,15 @@ class _PushSettingsSheetState extends State<PushSettingsSheet> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '1. Öffne die Android-Einstellungen deines Handys.\n'
-                          '2. Gehe zu Apps ➔ "MB-Worker".\n'
-                          '3. Wähle "Benachrichtigungen" und schalte "Alle Benachrichtigungen zulassen" auf AN.\n'
-                          '4. Kehre zur App zurück und tippe oben auf "Token jetzt synchronisieren".',
+                          Platform.isIOS
+                              ? '1. Öffne die iPhone-Einstellungen.\n'
+                                '2. Scrolle zu "MB-Security" (oder "Mitteilungen").\n'
+                                '3. Tippe auf "Mitteilungen" und aktiviere "Mitteilungen erlauben".\n'
+                                '4. Kehre zur App zurück und tippe oben auf "Token jetzt synchronisieren".'
+                              : '1. Öffne die Android-Einstellungen deines Handys.\n'
+                                '2. Gehe zu Apps ➔ "MB-Worker".\n'
+                                '3. Wähle "Benachrichtigungen" und schalte "Alle Benachrichtigungen zulassen" auf AN.\n'
+                                '4. Kehre zur App zurück und tippe oben auf "Token jetzt synchronisieren".',
                           style: TextStyle(
                             fontSize: 11,
                             height: 1.4,

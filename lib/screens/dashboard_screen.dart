@@ -8,11 +8,19 @@ import '../core/server_config.dart';
 import '../services/api_service.dart';
 import '../services/secure_storage_service.dart';
 import '../services/sync_queue_service.dart';
-
+import '../services/web_push_service.dart';
+import '../services/deep_link_service.dart';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import '../services/firebase_service.dart';
+import '../services/notification_service.dart';
 import '../services/acl_service.dart';
+import '../widgets/push_settings_sheet.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
+import 'self_checkin_screen.dart';
+import '../services/location_service.dart';
 import 'slots_screen.dart';
 import 'wachbuch_list_screen.dart';
 import 'urlaub_screen.dart';
@@ -20,9 +28,14 @@ import 'krankentage_screen.dart';
 import 'document_list_screen.dart';
 import 'login_screen.dart';
 import 'angestellte_profile_screen.dart';
+import 'angestellte_list_screen.dart';
 import 'notifications_screen.dart';
 import 'abwesenheit_screen.dart';
 import 'meeting_list_screen.dart';
+import 'email_list_screen.dart';
+import 'chat_list_screen.dart';
+import 'arbeitszeitkonto_screen.dart';
+import 'change_password_screen.dart';
 
 import '../models/slot.dart';
 import '../models/urlaub.dart';
@@ -31,7 +44,12 @@ import '../providers/theme_provider.dart';
 import '../models/angestellte.dart';
 import '../models/abwesenheit.dart';
 import '../models/meeting.dart';
+import '../models/bereitschaft.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import '../services/web_biometric_service.dart';
 
 class ScheduledEvent {
   final String title;
@@ -99,7 +117,7 @@ class DashboardScreen extends StatefulWidget {
   _DashboardScreenState createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
   final ApiService _apiService = ApiService();
   final AclService _aclService = AclService();
   final SecureStorageService _storage = SecureStorageService();
@@ -113,7 +131,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _authToken;
 
   Future<List<ScheduledEvent>> _eventsFuture = Future.value([]);
-  List<ScheduledEvent> _allEvents = [];
   
   // Check-in state for calendar
   final SyncQueueService _syncQueue = SyncQueueService();
@@ -128,7 +145,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _showKrank = true;
   bool _showAbwesenheit = true;
   bool _showMeetings = true;
-  bool _isAdmin = false;
   bool _persistFilters = false;
 
   // Counts for filters
@@ -138,39 +154,998 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _countAbwesenheit = 0;
   int _countMeetings = 0;
   bool? _serverOnline;
+  bool _showPushBanner = false;
+  String _pushPermission = 'granted';
+  List<Map<String, dynamic>> _upcomingBirthdays = [];
+  bool _birthdaysDismissed = false;
+  int _pendingQueueCount = 0;
+
+  bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    _refreshEvents();
-    _loadUser();
-    _fetchUnread();
-    _loadPreferences();
-    _checkServerStatus();
-    _loadLocalCheckins();
+    WidgetsBinding.instance.addObserver(this);
+    
+    // Run initialization sequentially to prevent race conditions
+    _initializeDashboard();
 
-    // Start sync queue for calendar check-ins
+    // Start sync queue for calendar check-ins & Wachbuch notes
     _syncQueue.startPeriodicSync();
-    _syncQueue.onSyncStateChanged = (count) {
-      // In dashboard we don't have a badge yet, but we update status if needed
-      debugPrint('Dashboard SyncQueue: $count items pending');
-    };
+    _syncQueue.addListener(_onSyncQueueChanged);
+    _syncQueue.getPendingCount().then((count) {
+      if (mounted) setState(() => _pendingQueueCount = count);
+    });
 
     // FCM Token Sync beim Start
     _syncFcmTokenOnStart();
+    
+    // Check for web updates
+    _startUpdateChecker();
+
+    // Setup push click & URL hash deep linking to slots
+    _setupDeepLink();
+
+    // Start 60-second periodic unread notification polling
+    _startUnreadNotificationPolling();
+  }
+
+  Future<void> _initializeDashboard() async {
+    await _loadPreferences();
+    await _loadLocalCheckins();
+    await _checkServerStatus();
+    await _loadUser();
+    await _fetchUnread();
+    await _loadUpcomingBirthdays();
+    
+    if (mounted) {
+      setState(() {
+        _isInitialized = true;
+      });
+      // Start fetching calendar events only after core services are ready
+      _refreshEvents();
+      // Admin banner
+      _loadAdminBanner();
+    }
+  }
+
+  Future<void> _loadAdminBanner() async {
+    final banner = await _apiService.getActiveBanner();
+    if (mounted && banner != null) {
+      // Kurze Verzögerung damit das UI fertig gerendert ist
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (mounted) _showAdminBannerDialog(banner);
+    }
+  }
+
+  void _showAdminBannerDialog(Map<String, dynamic> banner) {
+    final titel     = banner['name']     as String? ?? '';
+    final nachricht = banner['nachricht'] as String? ?? '';
+    final style     = banner['style']    as String? ?? 'info';
+
+    final Map<String, Color> bgColor = {
+      'info':    const Color(0xFF1565C0),
+      'warning': const Color(0xFFF57F17),
+      'success': const Color(0xFF2E7D32),
+      'danger':  const Color(0xFFC62828),
+    };
+    final Map<String, IconData> icons = {
+      'info':    Icons.info_outline,
+      'warning': Icons.warning_amber_rounded,
+      'success': Icons.check_circle_outline,
+      'danger':  Icons.error_outline,
+    };
+    final color = bgColor[style] ?? const Color(0xFF1565C0);
+    final icon  = icons[style]  ?? Icons.info_outline;
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withOpacity(0.55),
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 60),
+        clipBehavior: Clip.hardEdge,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 18, 12, 18),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [color, color.withOpacity(0.80)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Row(children: [
+                Icon(icon, color: Colors.white, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    titel,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                    ),
+                  ),
+                ),
+              ]),
+            ),
+            // Body
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (nachricht.isNotEmpty)
+                    Text(
+                      nachricht,
+                      style: const TextStyle(fontSize: 14, height: 1.5),
+                    ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: color,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () => Navigator.pop(_),
+                      child: const Text('Verstanden',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('AppLifecycleState.resumed: Re-checking push token & permissions');
+      _syncFcmTokenOnStart();
+    }
   }
 
   Future<void> _syncFcmTokenOnStart() async {
     // Kurze Verzögerung, damit die UI bereit ist
-    await Future.delayed(const Duration(seconds: 2));
-    final msg = await _apiService.syncFcmToken();
+    await Future.delayed(const Duration(milliseconds: 600));
+
+    // Fall 1: Nativer Mobile-Build (Android & iOS via FCM)
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      final token = await FirebaseService().requestPermissionAndSyncToken();
+      debugPrint('Native Mobile FCM Token synced on start: $token');
+      final notificationsEnabled = await NotificationService().areNotificationsEnabled();
+      if (mounted) {
+        setState(() {
+          _pushPermission = (token != null && notificationsEnabled) ? 'granted' : 'denied';
+          _showPushBanner = token == null || !notificationsEnabled;
+        });
+      }
+      return;
+    }
+
+    // Fall 2: Web / iOS PWA
+    await _apiService.syncFcmToken(); // Silent in UI
+
+    final webPush = WebPushService();
+    final perm = webPush.getNotificationPermission();
+
+    // Wenn Permission bereits erteilt -> Subscription leise im Hintergrund auffrischen
+    if (perm == 'granted') {
+      await webPush.initWebPush();
+      if (mounted) {
+        setState(() {
+          _pushPermission = 'granted';
+          _showPushBanner = false;
+        });
+      }
+      return;
+    }
+
+    // Falls nicht erteilt -> Prüfen ob Banner kürzlich weggeklickt wurde
+    final prefs = await SharedPreferences.getInstance();
+    final dismissedAt = prefs.getInt('push_banner_dismissed_at') ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final isDismissedRecently = (now - dismissedAt) < (24 * 60 * 60 * 1000); // 24h
+
     if (mounted) {
-       _showMsg('FCM Sync: $msg', msg.contains('OK') ? Colors.green : Colors.orange);
+      setState(() {
+        _pushPermission = perm;
+        _showPushBanner = !isDismissedRecently;
+      });
+    }
+
+    if (webPush.shouldShowIosTutorial) {
+      final showedTutorial = prefs.getBool('ios_push_tutorial_shown') ?? false;
+      if (!showedTutorial) {
+        await prefs.setBool('ios_push_tutorial_shown', true);
+        if (mounted) {
+          _showIosTutorialPopup();
+        }
+      }
+    }
+  }
+
+  void _handlePushBannerAction() {
+    PushSettingsSheet.show(
+      context,
+      onTokenSynced: () {
+        _syncFcmTokenOnStart();
+      },
+    );
+  }
+
+  void _showPermissionDeniedDialog() {
+    final isAndroid = !kIsWeb && Platform.isAndroid;
+    final isNativeIos = !kIsWeb && Platform.isIOS;
+    final isIosWeb = kIsWeb && WebPushService().isIosDevice();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.settings, color: Theme.of(context).primaryColor, size: 28),
+            const SizedBox(width: 10),
+            const Expanded(child: Text('Mitteilungen freischalten')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isAndroid
+                  ? 'Auf deinem Android-Gerät sind Benachrichtigungen deaktiviert. So aktivierst du sie:'
+                  : (isNativeIos
+                      ? 'Auf deinem iPhone sind Mitteilungen für die App deaktiviert. So aktivierst du sie:'
+                      : (isIosWeb
+                          ? 'Auf deinem iPhone sind Mitteilungen für die Web-App deaktiviert. So aktivierst du sie:'
+                          : 'Im Browser wurden Benachrichtigungen blockiert. So schaltest du sie in 10 Sekunden frei:')),
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 14),
+            if (isAndroid) ...[
+              _buildGuideStep('1', 'Öffne die Smartphone-Einstellungen.'),
+              _buildGuideStep('2', 'Wähle "Apps" (oder "App-Management") -> "MB-Worker".'),
+              _buildGuideStep('3', 'Tippe auf "Benachrichtigungen" und schalte "Alle Benachrichtigungen zulassen" ein.'),
+              _buildGuideStep('4', 'Kehre zur MB-Worker App zurück.'),
+            ] else if (isNativeIos) ...[
+              _buildGuideStep('1', 'Öffne die iPhone-Einstellungen.'),
+              _buildGuideStep('2', 'Scrolle nach unten zu "MB-Security" (oder "Mitteilungen").'),
+              _buildGuideStep('3', 'Tippe auf "Mitteilungen" und aktiviere "Mitteilungen erlauben".'),
+              _buildGuideStep('4', 'Kehre zur App zurück.'),
+            ] else if (isIosWeb) ...[
+              _buildGuideStep('1', 'Öffne die iPhone-Einstellungen.'),
+              _buildGuideStep('2', 'Scrolle nach unten zu "Mitteilungen" oder "Safari / MB Worker".'),
+              _buildGuideStep('3', 'Schalte den Schalter "Mitteilungen erlauben" auf EIN.'),
+              _buildGuideStep('4', 'Kehre zur App zurück und wische nach unten.'),
+            ] else ...[
+              _buildGuideStep('1', 'Tippe oben links neben der Webadresse (app.mb-scc.net) auf das Schloss- oder Schieberegler-Symbol.'),
+              _buildGuideStep('2', 'Wähle "Berechtigungen" oder "Website-Einstellungen".'),
+              _buildGuideStep('3', 'Setze "Benachrichtigungen" auf "Zulassen".'),
+              _buildGuideStep('4', 'Lade die Seite einmal neu (nach unten wischen).'),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Verstanden'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGuideStep(String step, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 11,
+            backgroundColor: Theme.of(context).primaryColor.withOpacity(0.15),
+            child: Text(step, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPushBanner() {
+    final isDenied = _pushPermission == 'denied';
+    final isIosNonStandalone = WebPushService().shouldShowIosTutorial;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isDenied
+              ? [const Color(0xFFFFF3E0), const Color(0xFFFFE0B2)]
+              : [const Color(0xFFE3F2FD), const Color(0xFFBBDEFB)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDenied ? Colors.orange.shade300 : Colors.blue.shade300,
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isDenied ? Colors.orange.shade100 : Colors.blue.shade100,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isDenied ? Icons.notifications_off_outlined : Icons.notifications_active_outlined,
+                color: isDenied ? Colors.orange.shade800 : Colors.blue.shade800,
+                size: 26,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isDenied
+                        ? (!kIsWeb && (Platform.isAndroid || Platform.isIOS)
+                            ? 'Push-Berechtigung & Status'
+                            : 'Benachrichtigungen blockiert')
+                        : isIosNonStandalone
+                            ? 'Zum Home-Bildschirm für Push'
+                            : 'Schicht-Benachrichtigungen aktivieren',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: isDenied ? Colors.orange.shade900 : Colors.blue.shade900,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    isDenied
+                        ? (!kIsWeb && (Platform.isAndroid || Platform.isIOS)
+                            ? 'In den Einstellungen aktiviert? Tippe hier für Status, Token-Synchronisation und Test-Push.'
+                            : 'Benachrichtigungen sind im Browser deaktiviert. Tippe hier, um zu sehen, wie du sie freischaltest.')
+                        : isIosNonStandalone
+                            ? 'Füge MB Worker zum Home-Bildschirm hinzu, um Schichten direkt aufs iPhone zu erhalten.'
+                            : 'Erhalte neue Schichten und Änderungen sofort per Push auf dein Handy.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isDenied ? Colors.brown.shade800 : Colors.blueGrey.shade800,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _handlePushBannerAction,
+                        icon: Icon(
+                          isDenied
+                              ? (!kIsWeb && (Platform.isAndroid || Platform.isIOS) ? Icons.tune : Icons.help_outline)
+                              : Icons.check_circle_outline,
+                          size: 18,
+                        ),
+                        label: Text(
+                          isDenied
+                              ? (!kIsWeb && (Platform.isAndroid || Platform.isIOS) ? 'Einstellungen & Test' : 'Anleitung')
+                              : isIosNonStandalone
+                                  ? 'So geht\'s'
+                                  : 'Jetzt aktivieren',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: isDenied ? Colors.orange.shade700 : Theme.of(context).primaryColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () async {
+                          setState(() => _showPushBanner = false);
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.setInt('push_banner_dismissed_at', DateTime.now().millisecondsSinceEpoch);
+                        },
+                        child: Text(
+                          'Später',
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPushStatusQuickBar() {
+    final isGranted = _pushPermission == 'granted';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primaryColor = Theme.of(context).primaryColor;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isGranted ? Colors.green.withOpacity(0.35) : Colors.orange.withOpacity(0.4),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: _handlePushBannerAction,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: isGranted ? Colors.green : Colors.orange,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: (isGranted ? Colors.green : Colors.orange).withOpacity(0.5),
+                        blurRadius: 5,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Icon(
+                  isGranted ? Icons.notifications_active : Icons.notifications_off_outlined,
+                  size: 20,
+                  color: isGranted ? Colors.green : Colors.orange,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    isGranted ? 'Push-Mitteilungen: Aktiv' : 'Push-Mitteilungen: Nicht aktiv',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: primaryColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.tune, size: 14, color: primaryColor),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Einstellungen',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _loadUpcomingBirthdays() async {
+    try {
+      final list = await _apiService.getUpcomingBirthdays();
+      if (mounted) {
+        setState(() {
+          _upcomingBirthdays = list;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading upcoming birthdays: $e');
+    }
+  }
+
+  Widget _buildBirthdaysWidget() {
+    if (_birthdaysDismissed || _upcomingBirthdays.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFE67E22), Color(0xFFD35400)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.12),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 40, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: const [
+                    Text('🎉 ', style: TextStyle(fontSize: 16)),
+                    Text(
+                      'Geburtstage dieser Woche',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ..._upcomingBirthdays.take(3).map((b) {
+                  final name = b['name'] ?? '${b['firstName'] ?? ''} ${b['lastName'] ?? ''}'.trim();
+                  final daysUntil = b['daysUntil'] as int? ?? 0;
+                  final age = b['age'];
+                  final whenText = daysUntil == 0
+                      ? '🎂 Heute!'
+                      : (daysUntil == 1 ? 'Morgen' : 'in $daysUntil Tagen');
+
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2.5),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.cake, size: 14, color: Colors.white70),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            '$name${age != null ? " ($age)" : ""}',
+                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: daysUntil == 0 ? Colors.white : Colors.white24,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            whenText,
+                            style: TextStyle(
+                              color: daysUntil == 0 ? const Color(0xFFD35400) : Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+          Positioned(
+            top: 4,
+            right: 4,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+              onPressed: () => setState(() => _birthdaysDismissed = true),
+              tooltip: 'Ausblenden',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showIosTutorialPopup() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.apple, size: 28),
+            SizedBox(width: 8),
+            Expanded(child: Text('Apple (iOS) Hinweis')),
+          ],
+        ),
+        content: const Text(
+            'Um Push-Benachrichtigungen für neue Schichten zu erhalten, musst du diese App zu deinem Home-Bildschirm hinzufügen.\n\n'
+            'Tippe dazu im Safari-Browser unten auf das "Teilen"-Symbol (Viereck mit Pfeil nach oben) und wähle "Zum Home-Bildschirm".\n\n'
+            'Starte die App danach vom Home-Bildschirm neu.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Verstanden'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSyncQueueSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return FutureBuilder<List<Map<String, dynamic>>>(
+              future: _syncQueue.getPendingItems(),
+              builder: (context, snapshot) {
+                final items = snapshot.data ?? [];
+                return Padding(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom,
+                  ),
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.75,
+                    ),
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Drag handle
+                        Center(
+                          child: Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade400,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        // Header
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade100,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.cloud_sync_outlined,
+                                color: Colors.amber.shade900,
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Ausstehende Vorgänge (${items.length})',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 17,
+                                    ),
+                                  ),
+                                  const Text(
+                                    'Offline-Warteschlange',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (_syncQueue.isSyncing)
+                              const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.amber.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.info_outline, size: 20, color: Colors.amber.shade900),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Diese Aktionen wurden ohne Internet erfasst und sicher gespeichert. '
+                                  'Sie werden automatisch synchronisiert, sobald das Signal wiederhergestellt ist.',
+                                  style: TextStyle(fontSize: 12, color: Colors.amber.shade900),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        if (items.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Center(
+                              child: Text(
+                                'Keine ausstehenden Übertragungen.',
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                            ),
+                          )
+                        else
+                          Flexible(
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: items.length,
+                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              itemBuilder: (context, i) {
+                                final item = items[i];
+                                final type = item['type'] as String?;
+                                final desc = item['description'] as String? ?? 'Vorgang';
+                                final retries = (item['retryCount'] as int?) ?? 0;
+                                final createdAt = item['createdAt'] as String?;
+                                String dateText = '';
+                                if (createdAt != null) {
+                                  try {
+                                    final dt = DateTime.parse(createdAt).toLocal();
+                                    dateText = DateFormat('dd.MM. HH:mm').format(dt);
+                                  } catch (_) {}
+                                }
+
+                                IconData itemIcon = Icons.access_time;
+                                Color iconColor = Colors.blue;
+                                if (type == 'wachbuch_note') {
+                                  itemIcon = Icons.book_outlined;
+                                  iconColor = Colors.indigo;
+                                } else if (desc.toLowerCase().contains('check-in') || desc.toLowerCase().contains('beginn')) {
+                                  itemIcon = Icons.login;
+                                  iconColor = Colors.green;
+                                } else if (desc.toLowerCase().contains('check-out') || desc.toLowerCase().contains('ende')) {
+                                  itemIcon = Icons.logout;
+                                  iconColor = Colors.orange;
+                                }
+
+                                return ListTile(
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                  leading: CircleAvatar(
+                                    radius: 16,
+                                    backgroundColor: iconColor.withOpacity(0.12),
+                                    child: Icon(itemIcon, size: 18, color: iconColor),
+                                  ),
+                                  title: Text(
+                                    desc,
+                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                  ),
+                                  subtitle: Text(
+                                    '$dateText • $retries Versuche',
+                                    style: const TextStyle(fontSize: 11, color: Colors.grey),
+                                  ),
+                                  trailing: const Icon(Icons.schedule, size: 16, color: Colors.amber),
+                                );
+                              },
+                            ),
+                          ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: items.isEmpty || _syncQueue.isSyncing
+                                    ? null
+                                    : () async {
+                                        setSheetState(() {});
+                                        await _syncQueue.processQueue();
+                                        if (context.mounted) {
+                                          setSheetState(() {});
+                                          if (_syncQueue.pendingCount == 0) {
+                                            Navigator.pop(ctx);
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(
+                                                content: Text('✅ Alle Vorgänge erfolgreich synchronisiert!'),
+                                                backgroundColor: Colors.green,
+                                              ),
+                                            );
+                                          }
+                                        }
+                                      },
+                                icon: const Icon(Icons.sync),
+                                label: const Text('Jetzt synchronisieren'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(context).primaryColor,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              child: const Text('Schließen'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Timer? _updateTimer;
+  Timer? _pollTimer;
+
+  void _setupDeepLink() {
+    // 1. Initial URL hash on app start (e.g. #Slots/view/:id)
+    final initialSlotId = DeepLinkService().getInitialSlotId();
+    if (initialSlotId != null && initialSlotId.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _navigateToSlotDeepLink(initialSlotId);
+      });
+    }
+
+    // 2. Runtime hash changes & Web Push notification clicks
+    DeepLinkService().onSlotDeepLink((slotId) {
+      if (mounted && slotId.isNotEmpty) {
+        _navigateToSlotDeepLink(slotId);
+      }
+    });
+  }
+
+  void _navigateToSlotDeepLink(String slotId) {
+    DeepLinkService().clearDeepLink();
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => SlotsScreen(highlightId: slotId)),
+    );
+  }
+
+  void _startUnreadNotificationPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted) {
+        _fetchUnread();
+      }
+    });
+  }
+
+  void _startUpdateChecker() {
+    // Check for updates every 2 minutes
+    _updateTimer = Timer.periodic(const Duration(minutes: 2), (_) async {
+      if (!kIsWeb) return; // Only needed for Web cache busting
+      try {
+        final response = await http.get(Uri.parse('https://app.mb-scc.net/version.json?t=${DateTime.now().millisecondsSinceEpoch}'));
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          final latestBuild = data['buildNumber'] as int?;
+          if (latestBuild != null && latestBuild > AppConstants.appBuildNumber) {
+            _updateTimer?.cancel();
+            if (mounted) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => AlertDialog(
+                  title: const Text('App Update verfügbar!'),
+                  content: const Text('Es wurden neue Anpassungen an der App vorgenommen. Bitte lade die App neu, damit die Änderungen sofort wirksam werden und du keine alten Daten siehst.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Später'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        WebBiometricService().reloadWeb();
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white),
+                      child: const Text('Jetzt neu laden'),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+        }
+      } catch (_) {}
+    });
+  }
+
+  void _onSyncQueueChanged() {
+    if (mounted) {
+      setState(() {
+        _pendingQueueCount = _syncQueue.pendingCount;
+      });
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _syncQueue.removeListener(_onSyncQueueChanged);
+    _pollTimer?.cancel();
+    _updateTimer?.cancel();
     _syncQueue.stopPeriodicSync();
     _calendarController.dispose();
     super.dispose();
@@ -199,10 +1174,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _refreshEvents() {
     setState(() {
-      _eventsFuture = _fetchEvents().then((data) {
-        _allEvents = data;
-        return data;
-      });
+      _eventsFuture = _fetchEvents();
     });
   }
 
@@ -220,7 +1192,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       });
     }
-    _refreshEvents();
   }
 
   Future<void> _savePreferences() async {
@@ -236,15 +1207,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _fetchUnread() async {
-    final notifs = await _apiService.getNotifications();
+    final count = await _apiService.getUnreadNotificationCount();
     if (mounted) {
       setState(() {
-        _unreadCount = notifs.where((n) => !n.read).length;
+        _unreadCount = count;
       });
     }
   }
 
-  void _loadUser() async {
+  Future<void> _loadUser() async {
     await _aclService.init();
     final aName = await _storage.getAngestellteName();
     final uName = await _storage.getUsername();
@@ -268,14 +1239,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
       }
     }
-
-    final self = await _apiService.getSelfUser();
-    if (mounted && self != null) {
-      setState(() {
-        _isAdmin = (self['user']?['isAdmin'] == true);
-      });
-      _refreshEvents();
-    }
   }
 
   Future<List<ScheduledEvent>> _fetchEvents() async {
@@ -289,6 +1252,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _apiService.getKrankentage().catchError((_) => <Krankentage>[]),
         _apiService.getAbwesenheiten().catchError((_) => <Abwesenheit>[]),
         _apiService.getMeetings().catchError((_) => <Meeting>[]),
+        _apiService.getBereitschaften().catchError((_) => <Bereitschaft>[]),
       ]).timeout(const Duration(seconds: 15));
 
       final allSlots = (results[0] as List<Slot>?) ?? [];
@@ -296,6 +1260,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final allKrankentage = (results[2] as List<Krankentage>?) ?? [];
       final allAbwesenheiten = (results[3] as List<Abwesenheit>?) ?? [];
       final allMeetings = (results[4] as List<Meeting>?) ?? [];
+      final allBereitschaften = (results[5] as List<Bereitschaft>?) ?? [];
 
       _countSlots = allSlots.length;
       _countUrlaub = allUrlaubs.length;
@@ -308,19 +1273,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final kranks = _showKrank ? allKrankentage : [];
       final absences = _showAbwesenheit ? allAbwesenheiten : [];
       final meetings = _showMeetings ? allMeetings : [];
+      // Bereitschaften immer anzeigen (kein Toggle)
+      final bereitschaften = allBereitschaften;
 
     for (var slot in slots) {
       if (slot.dateStart != null && slot.dateEnd != null) {
         try {
-          // Slots always have times, parse as UTC and convert to local
-          final start = format.parse(slot.dateStart!);
-          final end = format.parse(slot.dateEnd!);
+          // Slots: dateStart/dateEnd sind UTC → in Lokalzeit konvertieren
+          final start = format.parseUtc(slot.dateStart!).toLocal();
+          final end = format.parseUtc(slot.dateEnd!).toLocal();
 
-          // Parse company color or fallback
+          // Parse slot color: direkte Schichtfarbe hat Priorität, dann Firmenfarbcode
           Color slotColor = Colors.blue.shade700;
-          if (slot.firmaFarbcode != null && slot.firmaFarbcode!.isNotEmpty) {
+          final colorHex = (slot.color?.isNotEmpty == true) ? slot.color : slot.firmaFarbcode;
+          if (colorHex != null && colorHex.isNotEmpty) {
             try {
-              slotColor = Color(int.parse(slot.firmaFarbcode!.replaceFirst('#', '0xFF')));
+              slotColor = Color(int.parse(colorHex.replaceFirst('#', '0xFF')));
             } catch (_) {}
           }
           String subtitle = slot.objekteName ?? slot.positionsname ?? '';
@@ -342,21 +1310,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     for (var urlaub in urlaubs) {
       if (urlaub.dateStart != null && urlaub.dateEnd != null) {
         try {
-          // Treat strings as literal dates to avoid timezone-induced day shifts
-          final start = DateTime.parse(urlaub.dateStart!.substring(0, 10));
-          DateTime end = DateTime.parse(urlaub.dateEnd!.substring(0, 10));
+          // Urlaub: dateStart/dateEnd UTC → Lokalzeit für korrektes Tagesdatum
+          final start = format.parseUtc(urlaub.dateStart!).toLocal();
+          DateTime end = format.parseUtc(urlaub.dateEnd!).toLocal();
+          // Normalize to midnight for all-day comparison
+          final startDay = DateTime(start.year, start.month, start.day);
+          DateTime endDay = DateTime(end.year, end.month, end.day);
           
           // Subtract 1 day for Espo's exclusive boundary vs SfCalendar's inclusive approach
-          if (urlaub.dateEnd!.contains('00:00:00') && urlaub.dateStart != urlaub.dateEnd) {
-             if (end.isAfter(start)) {
-               end = end.subtract(const Duration(days: 1));
-             }
+          if (endDay.isAfter(startDay)) {
+            endDay = endDay.subtract(const Duration(days: 1));
           }
 
           events.add(ScheduledEvent(
             urlaub.name.isNotEmpty ? urlaub.name : 'Urlaub',
-            from: start,
-            to: end,
+            from: startDay,
+            to: endDay,
             isAllDay: true,
             background: const Color(0xFFaa20bf),
             originalObject: urlaub,
@@ -368,22 +1337,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
     for (var krank in kranks) {
       if (krank.dateStart != null && krank.dateEnd != null) {
         try {
-          final start = DateTime.parse(krank.dateStart!.substring(0, 10));
-          DateTime end = DateTime.parse(krank.dateEnd!.substring(0, 10));
+          final start = format.parseUtc(krank.dateStart!).toLocal();
+          DateTime end = format.parseUtc(krank.dateEnd!).toLocal();
+          final startDay = DateTime(start.year, start.month, start.day);
+          DateTime endDay = DateTime(end.year, end.month, end.day);
           
-          if (krank.dateEnd!.contains('00:00:00') && krank.dateStart != krank.dateEnd) {
-             if (end.isAfter(start)) {
-               end = end.subtract(const Duration(days: 1));
-             }
+          // Subtract 1 day for inclusive vs exclusive boundary
+          if (endDay.isAfter(startDay)) {
+            endDay = endDay.subtract(const Duration(days: 1));
           }
 
           events.add(ScheduledEvent(
             krank.name.isNotEmpty ? krank.name : 'Krank',
-            from: start,
-            to: end,
+            from: startDay,
+            to: endDay,
             isAllDay: true,
             background: const Color(0xFFeb0bb9),
             originalObject: krank,
+          ));
+        } catch (_) {}
+      }
+    }
+
+    // Bereitschaften – immer sichtbar, orange Farbe
+    for (var b in bereitschaften) {
+      if (b.dateStart != null && b.dateEnd != null) {
+        try {
+          final startLocal = format.parseUtc(b.dateStart!).toLocal();
+          final endLocal = format.parseUtc(b.dateEnd!).toLocal();
+          final startDay = DateTime(startLocal.year, startLocal.month, startLocal.day);
+          DateTime endDay = DateTime(endLocal.year, endLocal.month, endLocal.day);
+
+          // EspoCRM: dateEnd ist exklusiv → für SfCalendar 1 Tag zurück
+          if (endDay.isAfter(startDay)) {
+            endDay = endDay.subtract(const Duration(days: 1));
+          }
+
+          events.add(ScheduledEvent(
+            b.name.isNotEmpty ? b.name : 'Bereitschaft',
+            from: startDay,
+            to: endDay,
+            isAllDay: true,
+            background: const Color(0xFFFF8C00), // orange
+            originalObject: b,
           ));
         } catch (_) {}
       }
@@ -399,26 +1395,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
           }
 
           if (isAllDay) {
-            final start = DateTime.parse(abs.dateStart!.substring(0, 10));
-            DateTime end = DateTime.parse(abs.dateEnd!.substring(0, 10));
+            final start = format.parseUtc(abs.dateStart!).toLocal();
+            DateTime end = format.parseUtc(abs.dateEnd!).toLocal();
+            final startDay = DateTime(start.year, start.month, start.day);
+            DateTime endDay = DateTime(end.year, end.month, end.day);
             
             // Subtract 1 day for inclusive vs exclusive boundary
-            if (abs.dateEnd!.contains('00:00:00')) {
-                if (end.isAfter(start)) end = end.subtract(const Duration(days: 1));
+            if (endDay.isAfter(startDay)) {
+              endDay = endDay.subtract(const Duration(days: 1));
             }
             
             events.add(ScheduledEvent(
               abs.name.isNotEmpty ? abs.name : 'Abwesenheit',
-              from: start,
-              to: end,
+              from: startDay,
+              to: endDay,
               isAllDay: true,
               background: const Color(0xFFFF0000),
               originalObject: abs,
             ));
           } else {
-            // Specific time window
-            final start = format.parse(abs.dateStart!);
-            final end = format.parse(abs.dateEnd!);
+            // Specific time window – UTC → Lokalzeit
+            final start = format.parseUtc(abs.dateStart!).toLocal();
+            final end = format.parseUtc(abs.dateEnd!).toLocal();
 
             events.add(ScheduledEvent(
               abs.name.isNotEmpty ? abs.name : 'Abwesenheit',
@@ -443,18 +1441,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
           DateTime end;
 
           if (isAllDay) {
-            // All-day uses inclusive parsing for SfCalendar
-            start = DateTime.parse(m.dateStart!.substring(0, 10));
-            end = DateTime.parse(m.dateEnd!.substring(0, 10));
+            // All-day uses inclusive parsing for SfCalendar – UTC → Lokalzeit
+            final startLocal = format.parseUtc(m.dateStart!).toLocal();
+            final endLocal = format.parseUtc(m.dateEnd!).toLocal();
+            start = DateTime(startLocal.year, startLocal.month, startLocal.day);
+            DateTime endDay = DateTime(endLocal.year, endLocal.month, endLocal.day);
             
             // Subtract 1 day for Espo's exclusive boundary vs SfCalendar's inclusive approach
-            if (end.isAfter(start)) {
-              end = end.subtract(const Duration(days: 1));
+            if (endDay.isAfter(start)) {
+              endDay = endDay.subtract(const Duration(days: 1));
             }
+            end = endDay;
           } else {
-            // Specific time window (converted to local)
-            start = format.parse(m.dateStart!);
-            end = format.parse(m.dateEnd!);
+            // Specific time window – UTC → Lokalzeit
+            start = format.parseUtc(m.dateStart!).toLocal();
+            end = format.parseUtc(m.dateEnd!).toLocal();
           }
 
           events.add(ScheduledEvent(
@@ -495,9 +1496,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             kleidungTriggered = true;
             _apiService.getSlotById(obj.id).then((fullSlot) {
               if (fullSlot != null) {
-                final info = fullSlot.neueobjektkleidunganmerkung;
+                final nk = fullSlot.neueobjektkleidung;
+                final nka = fullSlot.neueobjektkleidunganmerkung;
                 setDialogState(() {
-                  kleidungInfo = (info != null && info.isNotEmpty) ? info : null;
+                  if (nk != null && nk.isNotEmpty && nk != 'null') {
+                    kleidungInfo = nk.replaceAll(RegExp(r'[\[\]"]'), '').replaceAll(',', ', ');
+                    if (nka != null && nka.isNotEmpty && nka != 'null') {
+                      kleidungInfo = '$kleidungInfo\nAnmerkung: $nka';
+                    }
+                  } else if (nka != null && nka.isNotEmpty && nka != 'null') {
+                    kleidungInfo = nka;
+                  }
                   kleidungLoaded = true;
                 });
               } else {
@@ -532,7 +1541,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
             // Specific details based on object type
             if (obj is Slot) ...[
-              if (AclService.isAdminApp && obj.accountName != null) _buildDetailRow(Icons.business, 'Firma', obj.accountName!, colorCode: obj.firmaFarbcode),
+              if (AclService().isAppManager && obj.accountName != null) _buildDetailRow(Icons.business, 'Firma', obj.accountName!, colorCode: obj.firmaFarbcode),
               if (obj.objekteName != null) 
                 _buildDetailRow(
                   Icons.location_on, 
@@ -577,7 +1586,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Row(children: [
-                          const Text('🟢 ', style: TextStyle(fontSize: 18)),
+                          const Icon(Icons.circle, color: Colors.green, size: 18),
+                          const SizedBox(width: 4),
                           Text('Eingecheckt um $checkInTime', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.green)),
                         ]),
                       ),
@@ -585,7 +1595,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Row(children: [
-                          const Text('🔴 ', style: TextStyle(fontSize: 18)),
+                          const Icon(Icons.circle, color: Colors.red, size: 18),
+                          const SizedBox(width: 4),
                           Text('Ausgecheckt um $checkOutTime', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.red)),
                         ]),
                       ),
@@ -635,6 +1646,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               if (obj.krankenscheinName != null) _buildDetailRow(Icons.file_present, 'Dokument', obj.krankenscheinName!),
             ],
 
+            if (obj is Bereitschaft) ...[
+              _buildDetailRow(Icons.shield_outlined, 'Typ', 'Bereitschaft'),
+              _buildDetailRow(Icons.info_outline, 'Status', obj.status),
+              if (obj.description != null && obj.description!.isNotEmpty)
+                _buildDetailRow(Icons.description, 'Beschreibung', obj.description!),
+            ],
+
             if (obj is Abwesenheit) ...[
               _buildDetailRow(Icons.timer_off, 'Typ', 'Termin / Abwesenheit'),
               if (obj.description != null && obj.description!.isNotEmpty) 
@@ -678,9 +1696,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
       } catch (_) {}
     }
 
-    // GPS check
-    final gpsOk = await _checkGps(slot);
-    if (!gpsOk) return;
+    // GPS check via centralized LocationService
+    final gpsResult = await LocationService().checkGeofence(slot);
+    if (!gpsResult.isSuccess) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.location_off_rounded, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('Standort-Prüfung'),
+              ],
+            ),
+            content: Text(gpsResult.message),
+            actions: [
+              if (gpsResult.targetLat != null || gpsResult.address != null)
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    LocationService().openNavigation(
+                      lat: gpsResult.targetLat,
+                      lon: gpsResult.targetLon,
+                      address: gpsResult.address,
+                    );
+                  },
+                  icon: const Icon(Icons.navigation_outlined),
+                  label: const Text('Route anzeigen'),
+                ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
 
     final now = DateTime.now();
     final timeStr = DateFormat('HH:mm').format(now);
@@ -764,75 +1819,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<bool> _checkGps(Slot slot) async {
-    try {
-      if (slot.objekteId == null) {
-        debugPrint('Kein Objekt verknüpft - überspringe GPS-Check');
-        return true;
-      }
-
-      // GPS Koordinaten kommen laut User-Info immer über das Objekt
-      final coords = await _apiService.getObjektCoordinates(slot.objekteId!);
-      if (coords == null) {
-        debugPrint('Keine Koordinaten im Objekt hinterlegt - überspringe GPS-Check');
-        return true;
-      }
-
-      final double targetLat = coords['latk'] ?? 0;
-      final double targetLon = coords['lonK'] ?? 0;
-      final int allowedRadius = coords['rad'] ?? 30;
-
-      if (targetLat == 0 || targetLon == 0) return true;
-
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) { _showMsg('Bitte aktiviere GPS.', Colors.red); return false; }
-
-      LocationPermission perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-        if (perm == LocationPermission.denied) { _showMsg('Standort-Berechtigung verweigert.', Colors.red); return false; }
-      }
-      if (perm == LocationPermission.deniedForever) { _showMsg('GPS dauerhaft deaktiviert.', Colors.red); return false; }
-
-      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high, timeLimit: const Duration(seconds: 10));
-      
-      if (position.isMocked && !AclService().isAdmin) {
-        _showMsg('Mock-Standort erkannt! Blockiert.', Colors.red);
-        try { await _apiService.patchSlot(slot.id, {'mockStandort': true}); } catch (_) {}
-        return false;
-      }
-
-      double dist = Geolocator.distanceBetween(position.latitude, position.longitude, targetLat, targetLon);
-      if (dist > allowedRadius.toDouble()) {
-        _showMsg('Zu weit vom Objekt entfernt (${dist.toStringAsFixed(0)}m / max ${allowedRadius}m).', Colors.red);
-        return false;
-      }
-      return true;
-    } catch (e) {
-      _showMsg('GPS-Fehler: $e', Colors.red);
-      return false;
-    }
-  }
-
   Future<void> _launchNavigation(String? address) async {
     if (address == null || address.trim().isEmpty) return;
-    
-    final query = Uri.encodeComponent(address.trim());
-    final googleUrl = 'https://www.google.com/maps/search/?api=1&query=$query';
-    final appleUrl = 'https://maps.apple.com/?q=$query';
-
-    try {
-      bool launched = await launchUrl(Uri.parse(googleUrl), mode: LaunchMode.externalApplication);
-      if (!launched) {
-        launched = await launchUrl(Uri.parse(appleUrl), mode: LaunchMode.externalApplication);
-      }
-      if (!launched) {
-        _showMsg('Keine Navigations-App gefunden.', Colors.orange);
-      }
-    } catch (e) {
-       debugPrint('Navigation launch error: $e');
-       _showMsg('Keine Navigations-App gefunden.', Colors.orange);
-    }
+    await LocationService().openNavigation(address: address);
   }
 
   void _showMsg(String text, Color bg) {
@@ -939,6 +1928,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+
   Widget _buildDetailRow(IconData icon, String label, String value, {String? colorCode, VoidCallback? onTap}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -994,11 +1984,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildDrawerItem(IconData icon, String title, VoidCallback onTap) {
+  Widget _buildDrawerItem(IconData icon, String title, VoidCallback onTap, {Widget? trailing}) {
     return ListTile(
       dense: true,
       leading: Icon(icon, color: Colors.white70, size: 22),
       title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 15)),
+      trailing: trailing,
       onTap: () {
         Navigator.pop(context); // close drawer
         onTap();
@@ -1008,12 +1999,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_isInitialized) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Übersicht'),
+          backgroundColor: Theme.of(context).appBarTheme.backgroundColor ?? Theme.of(context).primaryColor,
+          foregroundColor: Colors.white,
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Initialisierung...', style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       
       appBar: AppBar(
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ClipOval(
+              child: Image.asset(
+                'assets/images/logo_cyan.png',
+                width: 26,
+                height: 26,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Image.asset(
+                  'assets/images/logo.png',
+                  width: 26,
+                  height: 26,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
             const Text('Übersicht'),
             const SizedBox(width: 8),
             if (_serverOnline != null)
@@ -1039,6 +2066,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
         centerTitle: true,
         elevation: 0,
         actions: [
+          if (_pendingQueueCount > 0)
+            IconButton(
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.cloud_upload_outlined, color: Colors.amberAccent),
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade700,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        '$_pendingQueueCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              tooltip: '$_pendingQueueCount ausstehende Synchronisation(en)',
+              onPressed: _showSyncQueueSheet,
+            ),
           IconButton(
             icon: Stack(
               clipBehavior: Clip.none,
@@ -1072,6 +2131,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
             tooltip: 'Benachrichtigungen',
           ),
           IconButton(
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(
+                  _pushPermission == 'granted' ? Icons.phonelink_ring : Icons.notifications_paused_outlined,
+                  color: _pushPermission == 'granted' ? Colors.white : Colors.amberAccent,
+                ),
+                if (_pushPermission != 'granted')
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Colors.amberAccent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            tooltip: 'Push-Einstellungen & Status',
+            onPressed: _handlePushBannerAction,
+          ),
+          IconButton(
             icon: const Icon(Icons.tune),
             onPressed: _showFilterDialog,
             tooltip: 'Filter',
@@ -1102,6 +2187,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
               decoration: BoxDecoration(color: Theme.of(context).primaryColor),
               child: Column(
                 children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ClipOval(
+                        child: Image.asset(
+                          'assets/images/logo_cyan.png',
+                          width: 28,
+                          height: 28,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Image.asset(
+                            'assets/images/logo.png',
+                            width: 28,
+                            height: 28,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'MB SECURITY',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
                   Text(
                     _username,
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
@@ -1182,11 +2298,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _buildDrawerItem(Icons.dashboard, 'Dashboard', () {
                     // Drawer already pops in _buildDrawerItem, nothing else to do
                   }),
-                  _buildDrawerItem(Icons.book, 'Wachbuch', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const WachbuchListScreen()));
+                  _buildDrawerItem(
+                    Icons.notifications_active,
+                    'Push-Benachrichtigungen',
+                    _handlePushBannerAction,
+                    trailing: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _pushPermission == 'granted'
+                            ? Colors.green.withOpacity(0.2)
+                            : Colors.amber.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _pushPermission == 'granted'
+                              ? Colors.greenAccent
+                              : Colors.amberAccent,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _pushPermission == 'granted'
+                                ? Icons.check_circle
+                                : Icons.warning_amber_rounded,
+                            size: 12,
+                            color: _pushPermission == 'granted'
+                                ? Colors.greenAccent
+                                : Colors.amberAccent,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _pushPermission == 'granted' ? 'Aktiv' : 'Einrichten',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: _pushPermission == 'granted'
+                                  ? Colors.greenAccent
+                                  : Colors.amberAccent,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _buildDrawerItem(Icons.touch_app_rounded, 'Einstempeln / Check-In', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const SelfCheckinScreen()));
                   }),
                   _buildDrawerItem(Icons.calendar_today, 'Schichten', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const SlotsScreen()));
+                  }),
+                  _buildDrawerItem(Icons.access_time_filled, 'Arbeitszeitkonto', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ArbeitszeitkontoScreen()));
                   }),
                   _buildDrawerItem(Icons.flight_takeoff, 'Urlaub', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const UrlaubScreen()));
@@ -1197,11 +2361,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _buildDrawerItem(Icons.timer_off, 'Abwesenheit', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const AbwesenheitScreen()));
                   }),
+                  _buildDrawerItem(Icons.book, 'Wachbuch', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const WachbuchListScreen()));
+                  }),
                   _buildDrawerItem(Icons.calendar_month, 'Meetings', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const MeetingListScreen()));
                   }),
-                  _buildDrawerItem(Icons.folder, 'Dokumente', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const DocumentListScreen()));
+                  if (_aclService.hasPermission('Document', 'read'))
+                    _buildDrawerItem(Icons.folder, 'Dokumente', () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const DocumentListScreen()));
+                    }),
+                  _buildDrawerItem(Icons.people, 'Kollegen & Mitarbeiter', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AngestellteListScreen()));
+                  }),
+                  if (_aclService.hasPermission('Email', 'read'))
+                    _buildDrawerItem(Icons.email, 'E-Mails', () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const EmailListScreen()));
+                    }),
+                  _buildDrawerItem(Icons.chat, 'Chat', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatListScreen()));
                   }),
                 ],
               ),
@@ -1264,6 +2442,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             ListTile(
               dense: true,
+              leading: const Icon(Icons.settings, color: Colors.white70, size: 22),
+              title: const Text('Push-Einstellungen', style: TextStyle(color: Colors.white, fontSize: 14)),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _pushPermission == 'granted' ? Colors.green.withOpacity(0.2) : Colors.amber.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _pushPermission == 'granted' ? 'Aktiv' : 'Einrichten',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: _pushPermission == 'granted' ? Colors.greenAccent : Colors.amberAccent,
+                  ),
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                PushSettingsSheet.show(context, onTokenSynced: _syncFcmTokenOnStart);
+              },
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.lock, color: Colors.white70, size: 22),
+              title: const Text('Passwort ändern', style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context); // close drawer
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const ChangePasswordScreen()));
+              },
+            ),
+            ListTile(
+              dense: true,
               leading: const Icon(Icons.logout, color: Colors.white70, size: 22),
               title: const Text('Abmelden', style: TextStyle(color: Colors.white, fontSize: 14)),
               onTap: _logout,
@@ -1274,10 +2485,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       body: Column(
         children: [
-          // ─── WACHBUCH BUTTON (Prominent) ───
+          _buildPushStatusQuickBar(),
+          if (_showPushBanner)
+            _buildPushBanner(),
+
+          _buildBirthdaysWidget(),
+
+          // ─── AKTIONEN: EINSTEMPELN & WACHBUCH (Prominent) ───
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: Theme.of(context).primaryColor,
               borderRadius: const BorderRadius.only(
@@ -1285,19 +2502,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 bottomRight: Radius.circular(24),
               ),
             ),
-            child: ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const WachbuchListScreen()));
-              },
-              icon: const Icon(Icons.book, size: 28),
-              label: const Text('Wachbuch Öffnen', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              style: ElevatedButton.styleFrom(
-                foregroundColor: Theme.of(context).primaryColor,
-                backgroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                elevation: 4,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const SelfCheckinScreen()));
+                    },
+                    icon: const Icon(Icons.touch_app_rounded, size: 22),
+                    label: const Text('Einstempeln', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Theme.of(context).primaryColor,
+                      backgroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 3,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const WachbuchListScreen()));
+                    },
+                    icon: const Icon(Icons.book, size: 22),
+                    label: const Text('Wachbuch', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: Colors.white.withOpacity(0.2),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: const BorderSide(color: Colors.white54),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           

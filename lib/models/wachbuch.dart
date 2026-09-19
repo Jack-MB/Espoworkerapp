@@ -16,10 +16,11 @@ class Wachbuch {
   final int? duration;
   final String? beschreibung;
   final String? description;
-  final String? zustzlicheInformationen;
+  final String? informationen;
   final List<String>? art;
   final String? parentName;
   final String? objekteName;
+  final String? serviceObjectId;
   final String? assignedUserName;
   final String? createdByName;
   final String? modifiedByName;
@@ -38,10 +39,11 @@ class Wachbuch {
     this.duration,
     this.beschreibung,
     this.description,
-    this.zustzlicheInformationen,
+    this.informationen,
     this.art,
     this.parentName,
     this.objekteName,
+    this.serviceObjectId,
     this.assignedUserName,
     this.createdByName,
     this.modifiedByName,
@@ -62,10 +64,11 @@ class Wachbuch {
       duration: json['duration'],
       beschreibung: json['beschreibung'],
       description: json['description'],
-      zustzlicheInformationen: json['zustzlicheInformationen'],
+      informationen: json['informationen'],
       art: json['art'] != null ? List<String>.from(json['art']) : null,
       parentName: json['parentName'],
       objekteName: json['objekteName'],
+      serviceObjectId: json['serviceObjectId'] ?? json['objekteId'],
       assignedUserName: json['assignedUserName'],
       createdByName: json['createdByName'],
       modifiedByName: json['modifiedByName'],

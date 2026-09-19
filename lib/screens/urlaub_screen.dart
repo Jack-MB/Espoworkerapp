@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/api_service.dart';
 import '../models/urlaub.dart';
-import '../core/constants.dart';
-import '../services/acl_service.dart';
 
 class UrlaubScreen extends StatefulWidget {
   const UrlaubScreen({Key? key}) : super(key: key);
@@ -14,8 +12,7 @@ class UrlaubScreen extends StatefulWidget {
 
 class _UrlaubScreenState extends State<UrlaubScreen> {
   final ApiService _apiService = ApiService();
-  final AclService _aclService = AclService();
-  late Future<List<Urlaub>> _urlaubsFuture;
+  Future<List<Urlaub>>? _urlaubsFuture;
 
   @override
   void initState() {
@@ -61,7 +58,7 @@ class _UrlaubScreenState extends State<UrlaubScreen> {
         ],
       ),
       body: FutureBuilder<List<Urlaub>>(
-        future: _urlaubsFuture,
+        future: _urlaubsFuture ?? Future.value([]),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -97,16 +94,16 @@ class _UrlaubScreenState extends State<UrlaubScreen> {
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
-                              color: (urlaub.status == 'Genehmigt' ? Colors.green : Colors.orange).withOpacity(0.1),
+                              color: urlaub.statusColor.withOpacity(0.12),
                               borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: (urlaub.status == 'Genehmigt' ? Colors.green : Colors.orange).withOpacity(0.5)),
+                              border: Border.all(color: urlaub.statusColor.withOpacity(0.5)),
                             ),
                             child: Text(
                               urlaub.status,
                               style: TextStyle(
-                                color: urlaub.status == 'Genehmigt' ? Colors.green.shade800 : Colors.orange.shade800,
+                                color: urlaub.statusColor,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 12,
                               ),
@@ -119,9 +116,11 @@ class _UrlaubScreenState extends State<UrlaubScreen> {
                         children: [
                           Icon(Icons.date_range, size: 16, color: Colors.grey.shade600),
                           const SizedBox(width: 6),
-                          Text(
-                            '${urlaub.dateStartDate ?? "-"}  bis  ${urlaub.dateEndDate ?? "-"}',
-                            style: TextStyle(color: Colors.grey.shade800),
+                          Expanded(
+                            child: Text(
+                              urlaub.formattedDateRange + (urlaub.werktage != null ? ' (${urlaub.werktage} ${urlaub.werktage == 1 ? "Werktag" : "Werktage"})' : ''),
+                              style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w500),
+                            ),
                           ),
                         ],
                       ),
@@ -194,15 +193,24 @@ class __CreateUrlaubFormState extends State<_CreateUrlaubForm> {
       description: _descController.text.trim(),
     );
 
+    if (!mounted) return;
     setState(() => _isSubmitting = false);
 
     if (success) {
-      if (!mounted) return;
       Navigator.pop(context, true);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Urlaubsantrag erfolgreich eingereicht!')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Urlaubsantrag erfolgreich eingereicht!'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } else {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Einreichen.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ Fehler beim Einreichen des Urlaubsantrags.'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 

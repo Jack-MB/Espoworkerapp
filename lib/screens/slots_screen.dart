@@ -3,12 +3,13 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../services/sync_queue_service.dart';
 import '../models/slot.dart';
-import '../core/constants.dart';
 import '../services/acl_service.dart';
+import '../utils/espo_date.dart';
 
 class SlotsScreen extends StatefulWidget {
   final String? highlightId;
@@ -26,6 +27,8 @@ class _SlotsScreenState extends State<SlotsScreen> {
   bool _isLoading = true;
   String? _defaultPresetName;
   int _pendingSyncCount = 0;
+  DateTime? _lastSyncTime;
+  Timer? _deltaSyncTimer;
 
   // Filter state
   String? _selectedAngestellte;
@@ -48,11 +51,16 @@ class _SlotsScreenState extends State<SlotsScreen> {
   bool _isBulkMode = false;
   final Set<String> _bulkSelectedIds = {};
   List<Map<String, dynamic>> _presets = [];
+  bool _isOfflineData = false;
+
+  bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    _initializeData();
+    
+    // Sequential initialization to prevent UI race conditions
+    _initializeApp();
     
     // Start the sync queue for retrying failed server syncs
     _syncQueue.onSyncStateChanged = (count) {
@@ -62,34 +70,55 @@ class _SlotsScreenState extends State<SlotsScreen> {
     _syncQueue.getPendingCount().then((c) {
       if (mounted) setState(() => _pendingSyncCount = c);
     });
+
+    // Start background delta sync every 45 seconds
+    _deltaSyncTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (mounted) _refreshDelta();
+    });
+  }
+
+  Future<void> _initializeApp() async {
+    await _initializeData();
     
     // Level 2: If we have a highlightId, we might need a custom date range to see it
     if (widget.highlightId != null) {
-      _handleHighlightedSlot();
+      await _handleHighlightedSlot();
+    }
+    
+    if (mounted) {
+      setState(() {
+        _isInitialized = true;
+      });
     }
   }
 
   @override
   void dispose() {
+    _deltaSyncTimer?.cancel();
     _syncQueue.stopPeriodicSync();
     super.dispose();
   }
 
   Future<void> _handleHighlightedSlot() async {
-    // If we have a highlight ID, fetch that specific slot to know its date
-    final slot = await _apiService.getSlotById(widget.highlightId!);
-    if (slot != null && slot.dateStart != null) {
-      final date = DateTime.parse(slot.dateStart!);
-      setState(() {
-        _selectedDateRange = DateTimeRange(
-          start: DateTime(date.year, date.month, date.day),
-          end: DateTime(date.year, date.month, date.day),
-        );
-      });
-      // Trigger a reload for this specific day
-      await _loadSlots();
-      // Show details
-      _showSlotDetails(slot);
+    try {
+      final slot = await _apiService.getSlotById(widget.highlightId!);
+      if (!mounted) return;
+      if (slot != null && slot.dateStart != null) {
+        final date = espoDateToLocal(slot.dateStart!);
+        setState(() {
+          _selectedDateRange = DateTimeRange(
+            start: DateTime(date.year, date.month, date.day),
+            end: DateTime(date.year, date.month, date.day),
+          );
+        });
+        // Trigger a reload for this specific day
+        await _loadSlots();
+        if (mounted) {
+          _showSlotDetails(slot);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading highlighted slot: $e');
     }
   }
 
@@ -107,10 +136,12 @@ class _SlotsScreenState extends State<SlotsScreen> {
       }
     }
 
-    if (defaultPreset != null) {
-      _applyPreset(defaultPreset);
-    } else {
-      _loadSlots();
+    if (widget.highlightId == null) {
+      if (defaultPreset != null) {
+        _applyPreset(defaultPreset); // _applyPreset handles calling _loadSlots
+      } else {
+        await _loadSlots();
+      }
     }
   }
 
@@ -174,7 +205,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
       'name': name,
       'angestellte': _selectedAngestellte,
       'objekt': _selectedObjekt,
-      'account': AclService.isAdminApp ? _selectedAccount : null,
+      'account': AclService().isAppManager ? _selectedAccount : null,
     };
     
     // If a custom date range is selected, save it relative or absolute? 
@@ -256,6 +287,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
     setState(() {
       _allSlots = slots;
+      _isOfflineData = _apiService.isLastSlotsFromCache;
       _angestellteOptions = angestellteSet.toList()..sort();
       _objekteOptions = objekteSet.toList()..sort();
       _accountOptions = accountSet.toList()..sort();
@@ -276,8 +308,48 @@ class _SlotsScreenState extends State<SlotsScreen> {
           }
         }
       }
+      _lastSyncTime = DateTime.now().toUtc();
     });
     _applyFilters();
+  }
+
+  /// Delta-Sync: Lädt nur geänderte Slots seit _lastSyncTime nach und merget sie
+  Future<void> _refreshDelta() async {
+    if (_lastSyncTime == null) {
+      await _loadSlots();
+      return;
+    }
+    try {
+      final deltaSlots = await _apiService.getSlotsDelta(since: _lastSyncTime!);
+      if (deltaSlots.isEmpty) return;
+
+      final Map<String, Slot> slotMap = {for (var s in _allSlots) s.id: s};
+      for (var s in deltaSlots) {
+        slotMap[s.id] = s;
+        if (s.checkin != null && s.checkin!.isNotEmpty) {
+          _checkedSlotIds.add(s.id);
+          if (s.checkin!.contains(' ')) {
+            _checkedSlotTimes[s.id] = s.checkin!.split(' ')[1].substring(0, 5);
+          }
+        }
+        if (s.checkout != null && s.checkout!.isNotEmpty) {
+          _checkedSlotOutIds.add(s.id);
+          if (s.checkout!.contains(' ')) {
+            _checkedSlotOutTimes[s.id] = s.checkout!.split(' ')[1].substring(0, 5);
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _allSlots = slotMap.values.toList();
+          _lastSyncTime = DateTime.now().toUtc();
+        });
+        _applyFilters();
+      }
+    } catch (e) {
+      debugPrint('Error in _refreshDelta: $e');
+    }
   }
 
   Future<void> _loadCheckedSlots() async {
@@ -301,6 +373,13 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
   Future<void> _toggleSlotChecked(Slot slot, bool? value) async {
     if (value == true) {
+      // PRE-CHECK: Is checkin enabled globally?
+      final isEnabled = await _apiService.getCheckinConfig();
+      if (!isEnabled && !AclService().isAdmin) {
+        _showError('Check-In ist derzeit systemweit deaktiviert.');
+        return;
+      }
+
       // PRE-CHECK: Prevent early/late check-in on the wrong day for workers
       if (!AclService().isAdmin && slot.dateStart != null) {
         try {
@@ -596,18 +675,27 @@ class _SlotsScreenState extends State<SlotsScreen> {
       if (checkInTime.isEmpty) {
         data['checkinstat'] = null;
       } else {
-        bool isLate = false;
+        // Pünktlichkeitsampel:
+        // 🟢 = ≥30 Min vor Schichtbeginn eingecheckt
+        // 🟡 = innerhalb der 30-Min-Pufferzone vor Schichtbeginn
+        // 🔴 = nach Schichtbeginn eingecheckt (verspätet)
+        String checkinStat = '🟢';
         if (slot.dateStart != null) {
           try {
-            final startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parse(slot.dateStart!);
+            final startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(slot.dateStart!).toLocal();
             final parts = checkInTime.split(':');
             final checkDt = DateTime(startDt.year, startDt.month, startDt.day, int.parse(parts[0]), int.parse(parts[1]));
-            if (checkDt.isAfter(startDt)) {
-              isLate = true;
+            final diffMinutes = checkDt.difference(startDt).inMinutes; // positive = zu spät
+            if (diffMinutes > 0) {
+              checkinStat = '🔴'; // nach Schichtbeginn
+            } else if (diffMinutes > -30) {
+              checkinStat = '🟡'; // innerhalb 30-Min-Puffer
+            } else {
+              checkinStat = '🟢'; // ≥30 Min vor Schichtbeginn
             }
           } catch (_) {}
         }
-        data['checkinstat'] = isLate ? '🟡' : '🟢';
+        data['cI'] = checkinStat;
       }
     }
     if (checkOutTime != null) {
@@ -616,7 +704,14 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
     if (data.isNotEmpty) {
       try {
-        final success = await _apiService.patchSlot(slot.id, data);
+        bool success = false;
+        if (data.containsKey('checkin')) {
+          success = await _apiService.checkInSlot(slot.id, checkInTime: data['checkin']);
+        } else if (data.containsKey('checkout')) {
+          success = await _apiService.checkOutSlot(slot.id, checkOutTime: data['checkout']);
+        } else {
+          success = await _apiService.patchSlot(slot.id, data);
+        }
         if (success && mounted) {
           ScaffoldMessenger.of(context).clearSnackBars();
           ScaffoldMessenger.of(context).showSnackBar(
@@ -711,7 +806,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
     if (checkTime == null || slot.dateStart == null) return false;
     
     try {
-      final startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parse(slot.dateStart!);
+      final startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(slot.dateStart!).toLocal();
       final parts = checkTime.split(':');
       final checkDt = DateTime(startDt.year, startDt.month, startDt.day, int.parse(parts[0]), int.parse(parts[1]));
       return checkDt.isAfter(startDt);
@@ -722,8 +817,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
 
   void _applyFilters() {
-    final format = DateFormat('yyyy-MM-dd HH:mm:ss');
-    List<Slot> filtered = List.from(_allSlots);
+        List<Slot> filtered = List.from(_allSlots);
 
     if (_selectedAngestellte != null) {
       filtered = filtered.where((s) => s.angestellteName == _selectedAngestellte).toList();
@@ -739,18 +833,11 @@ class _SlotsScreenState extends State<SlotsScreen> {
         if (s.dateStart == null) return false;
         try {
           final cleanStr = s.dateStart!.trim();
-          // Extract just the 'YYYY-MM-DD' part safely to avoid any time format exceptions
           if (cleanStr.length < 10) return false;
           
-          final datePart = cleanStr.substring(0, 10);
-          final parts = datePart.split('-');
-          if (parts.length != 3) return false;
-          
-          final startDay = DateTime(
-            int.parse(parts[0]),
-            int.parse(parts[1]),
-            int.parse(parts[2]),
-          );
+          // Parse as UTC and convert to local to get correct local date
+          final dt = espoDateToLocal(cleanStr);
+          final startDay = DateTime(dt.year, dt.month, dt.day);
 
           final rangeStart = DateTime(_selectedDateRange!.start.year, _selectedDateRange!.start.month, _selectedDateRange!.start.day);
           final rangeEnd = DateTime(_selectedDateRange!.end.year, _selectedDateRange!.end.month, _selectedDateRange!.end.day);
@@ -819,7 +906,12 @@ class _SlotsScreenState extends State<SlotsScreen> {
     }
   }
 
-  Color _parseColor(String? hex) {
+  // Gibt die Anzeigefarbe für eine Schicht zurück.
+  // Priorität: 1. slot.color (direkte Schichtfarbe = EspoCRM Kalenderfarbe)
+  //             2. slot.firmaFarbcode (Firmenfarbcode als Fallback)
+  //             3. Standard Blau
+  Color _getSlotColor(Slot slot) {
+    final hex = slot.color?.isNotEmpty == true ? slot.color : slot.firmaFarbcode;
     if (hex == null || hex.isEmpty) return Colors.blue.shade700;
     try {
       return Color(int.parse(hex.replaceFirst('#', '0xFF')));
@@ -828,8 +920,30 @@ class _SlotsScreenState extends State<SlotsScreen> {
     }
   }
 
+
+
   @override
   Widget build(BuildContext context) {
+    if (!_isInitialized) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Schichten'),
+          backgroundColor: Theme.of(context).appBarTheme.backgroundColor ?? Theme.of(context).primaryColor,
+          foregroundColor: Colors.white,
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Schichten werden geladen...', style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        ),
+      );
+    }
+
     final format = DateFormat('dd.MM.yyyy HH:mm');
     
     return Scaffold(
@@ -881,6 +995,24 @@ class _SlotsScreenState extends State<SlotsScreen> {
       ),
       body: Column(
         children: [
+          if (_isOfflineData)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.amber.shade800,
+              child: const Row(
+                children: [
+                  Icon(Icons.cloud_off, size: 18, color: Colors.white),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Offline: Zuletzt gespeicherte Schichten werden angezeigt.',
+                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Container(
             color: Theme.of(context).cardColor,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -926,7 +1058,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
                       },
                     ),
                   ),
-                  if (AclService.isAdminApp) ...[
+                  if (AclService().isAppManager) ...[
                   const SizedBox(width: 8),
                   _FilterChip(
                     label: _selectedAccount ?? 'Kunde',
@@ -983,13 +1115,13 @@ class _SlotsScreenState extends State<SlotsScreen> {
                           itemCount: _filteredSlots.length,
                           itemBuilder: (context, index) {
                             final slot = _filteredSlots[index];
-                            final color = _parseColor(slot.firmaFarbcode);
+                            final color = _getSlotColor(slot);
 
                             DateTime? startDt;
                             DateTime? endDt;
                             try {
-                              if (slot.dateStart != null) startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parse(slot.dateStart!);
-                              if (slot.dateEnd != null) endDt = DateFormat('yyyy-MM-dd HH:mm:ss').parse(slot.dateEnd!);
+                              if (slot.dateStart != null) startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(slot.dateStart!).toLocal();
+                              if (slot.dateEnd != null) endDt = DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(slot.dateEnd!).toLocal();
                             } catch (_) {}
 
                             return Card(
@@ -1084,7 +1216,9 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                           ? Colors.green.shade100
                                                           : slot.isRejected
                                                               ? Colors.red.shade100
-                                                              : Colors.orange.shade100,
+                                                              : slot.isRueckgabe
+                                                                  ? Colors.purple.shade100
+                                                                  : Colors.orange.shade100,
                                                       borderRadius: BorderRadius.circular(8),
                                                     ),
                                                     child: Row(
@@ -1095,17 +1229,21 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                               ? Icons.check_circle
                                                               : slot.isRejected
                                                                   ? Icons.cancel
-                                                                  : Icons.hourglass_empty,
+                                                                  : slot.isRueckgabe
+                                                                      ? Icons.undo
+                                                                      : Icons.hourglass_empty,
                                                           size: 11,
                                                           color: slot.isAccepted
                                                               ? Colors.green.shade700
                                                               : slot.isRejected
                                                                   ? Colors.red.shade700
-                                                                  : Colors.orange.shade700,
+                                                                  : slot.isRueckgabe
+                                                                      ? Colors.purple.shade700
+                                                                      : Colors.orange.shade700,
                                                         ),
                                                         const SizedBox(width: 3),
                                                         Text(
-                                                          slot.annahmeStatus!,
+                                                          slot.isRueckgabe ? 'Rückgabe' : slot.annahmeStatus!,
                                                           style: TextStyle(
                                                             fontSize: 10,
                                                             fontWeight: FontWeight.w600,
@@ -1113,7 +1251,9 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                                 ? Colors.green.shade700
                                                                 : slot.isRejected
                                                                     ? Colors.red.shade700
-                                                                    : Colors.orange.shade700,
+                                                                    : slot.isRueckgabe
+                                                                        ? Colors.purple.shade700
+                                                                        : Colors.orange.shade700,
                                                           ),
                                                         ),
                                                       ],
@@ -1194,7 +1334,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                 ],
                                               ),
                                             // Account (nur Admin-App)
-                                            if (AclService.isAdminApp && slot.accountName != null) ...[
+                                            if (AclService().isAppManager && slot.accountName != null) ...[
                                               const SizedBox(height: 2),
                                               Row(
                                                 children: [
@@ -1279,7 +1419,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                               ),
                                             ],
                                             // ── Schicht-Annahme Buttons ───────────────────────────
-                                            if (AclService().canAcceptShifts && !slot.isAccepted && !slot.isRejected) ...[
+                                            if (AclService().canAcceptShifts && !slot.isAccepted && !slot.isRejected && !slot.isRueckgabe) ...[
                                               const SizedBox(height: 8),
                                               const Divider(height: 1),
                                               const SizedBox(height: 6),
@@ -1537,53 +1677,90 @@ class _SlotsScreenState extends State<SlotsScreen> {
   }
 
   Future<void> _ablehneSchicht(Slot slot) async {
+    final isRueckgabe = slot.isAccepted;
+    String kommentar = '';
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Schicht ablehnen'),
-        content: Text('Möchtest du die Schicht "${slot.name}" wirklich ablehnen?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Ablehnen', style: TextStyle(color: Colors.white)),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(isRueckgabe ? 'Schicht-Rückgabe beantragen' : 'Schicht ablehnen'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(isRueckgabe
+                  ? 'Möchtest du die bereits angenommene Schicht "${slot.name}" wirklich zurückgeben?\n\nDie Rückgabe wird an das Büro übermittelt und muss bestätigt werden.'
+                  : 'Möchtest du die Schicht "${slot.name}" wirklich ablehnen?'),
+              const SizedBox(height: 12),
+              TextField(
+                decoration: InputDecoration(
+                  labelText: isRueckgabe ? 'Grund für die Rückgabe' : 'Grund (optional)',
+                  hintText: 'z.B. Krankheit, Terminüberschneidung...',
+                  border: const OutlineInputBorder(),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                ),
+                maxLines: 2,
+                onChanged: (v) => kommentar = v.trim(),
+              ),
+            ],
           ),
-        ],
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: isRueckgabe ? Colors.orange : Colors.red),
+              child: Text(isRueckgabe ? 'Rückgabe anfragen' : 'Ablehnen', style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
       ),
     );
     if (confirmed != true) return;
 
     try {
-      await _apiService.ablehneSchicht(slot.id);
+      await _apiService.ablehneSchicht(slot.id, kommentar: kommentar.isNotEmpty ? kommentar : null);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('❌ Schicht abgelehnt'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text(isRueckgabe ? '↩ Rückgabe beantragt. Das Büro wurde benachrichtigt.' : '❌ Schicht abgelehnt'),
+            backgroundColor: isRueckgabe ? Colors.orange : Colors.red,
+            duration: const Duration(seconds: 3),
           ),
         );
         _loadSlots();
       }
     } catch (e) {
-      if (mounted) _showError('Fehler beim Ablehnen: $e');
+      if (mounted) _showError('Fehler: $e');
     }
   }
 
   void _showSlotDetails(Slot slot) {
     final format = DateFormat('dd.MM.yyyy HH:mm');
-    final color = _parseColor(slot.firmaFarbcode);
+    final color = _getSlotColor(slot);
 
     DateTime? startDt;
     DateTime? endDt;
     try {
-      if (slot.dateStart != null) startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parse(slot.dateStart!);
-      if (slot.dateEnd != null) endDt = DateFormat('yyyy-MM-dd HH:mm:ss').parse(slot.dateEnd!);
+      if (slot.dateStart != null) startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(slot.dateStart!).toLocal();
+      if (slot.dateEnd != null) endDt = DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(slot.dateEnd!).toLocal();
     } catch (_) {}
 
     // On-demand: clothing info is not in the list select, load it lazily
-    String? kleidungInfo = slot.neueobjektkleidunganmerkung;
+    String? kleidungInfo;
+    final ka = slot.kleidungAnmerkungen;
+    final nk = slot.neueobjektkleidung;
+    final nka = slot.neueobjektkleidunganmerkung;
+    
+    if (ka != null && ka.isNotEmpty && ka != 'null') {
+      kleidungInfo = ka;
+    } else if (nk != null && nk.isNotEmpty && nk != 'null') {
+      kleidungInfo = nk.replaceAll(RegExp(r'[\[\]"]'), '').replaceAll(',', ', ');
+      if (nka != null && nka.isNotEmpty && nka != 'null') {
+        kleidungInfo = '$kleidungInfo\nAnmerkung: $nka';
+      }
+    } else if (nka != null && nka.isNotEmpty && nka != 'null') {
+      kleidungInfo = nka;
+    }
     bool kleidungLoaded = kleidungInfo != null && kleidungInfo.isNotEmpty;
     bool kleidungLoading = !kleidungLoaded;
 
@@ -1595,9 +1772,20 @@ class _SlotsScreenState extends State<SlotsScreen> {
           if (kleidungLoading) {
             _apiService.getSlotById(slot.id).then((fullSlot) {
               if (fullSlot != null) {
-                final info = fullSlot.neueobjektkleidunganmerkung;
+                final fka = fullSlot.kleidungAnmerkungen;
+                final nk = fullSlot.neueobjektkleidung;
+                final nka = fullSlot.neueobjektkleidunganmerkung;
                 setModalState(() {
-                  kleidungInfo = (info != null && info.isNotEmpty) ? info : null;
+                  if (fka != null && fka.isNotEmpty && fka != 'null') {
+                    kleidungInfo = fka;
+                  } else if (nk != null && nk.isNotEmpty && nk != 'null') {
+                    kleidungInfo = nk.replaceAll(RegExp(r'[\[\]"]'), '').replaceAll(',', ', ');
+                    if (nka != null && nka.isNotEmpty && nka != 'null') {
+                      kleidungInfo = '$kleidungInfo\nAnmerkung: $nka';
+                    }
+                  } else if (nka != null && nka.isNotEmpty && nka != 'null') {
+                    kleidungInfo = nka;
+                  }
                   kleidungLoaded = true;
                   kleidungLoading = false;
                 });
@@ -1616,9 +1804,6 @@ class _SlotsScreenState extends State<SlotsScreen> {
             kleidungLoading = false; // Prevent re-triggering
           }
 
-          final isChecked = _checkedSlotIds.contains(slot.id);
-          final checkInTime = _checkedSlotTimes[slot.id] ?? '--:--';
-
           return AlertDialog(
             title: Text(slot.name, style: const TextStyle(fontWeight: FontWeight.bold)),
             content: SingleChildScrollView(
@@ -1634,7 +1819,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
                   
                   const Divider(height: 24),
                   
-                  if (AclService.isAdminApp && slot.accountName != null)
+                  if (AclService().isAppManager && slot.accountName != null)
                     _buildDetailRow(Icons.business, 'Kunde', slot.accountName!),
                   if (slot.objekteName != null)
                     _buildDetailRow(
@@ -1936,7 +2121,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
                           if (p['relativeRange'] == 'current_month') 'Aktueller Monat',
                           if (p['relativeRange'] == 'next_month') 'Nächster Monat',
                           if (p['angestellte'] != null) p['angestellte'],
-                          if (AclService.isAdminApp && p['account'] != null) 'Kunde: ${p['account']}',
+                          if (AclService().isAppManager && p['account'] != null) 'Kunde: ${p['account']}',
                         ].join(' | ')),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,

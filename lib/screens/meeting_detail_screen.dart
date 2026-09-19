@@ -13,7 +13,7 @@ class MeetingDetailScreen extends StatefulWidget {
 
 class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
   final ApiService _apiService = ApiService();
-  late Future<Meeting?> _meetingFuture;
+  Future<Meeting?>? _meetingFuture;
 
   @override
   void initState() {
@@ -30,7 +30,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Meeting?>(
-      future: _meetingFuture,
+      future: _meetingFuture ?? Future.value(null),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(appBar: AppBar(), body: const Center(child: CircularProgressIndicator()));
@@ -40,8 +40,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
           return Scaffold(appBar: AppBar(), body: const Center(child: Text('Fehler beim Laden des Meetings.')));
         }
 
-        final start = meeting.dateStart != null ? DateFormat('dd.MM.yyyy HH:mm').format(DateFormat('yyyy-MM-dd HH:mm:ss').parse(meeting.dateStart!)) : '-';
-        final end = meeting.dateEnd != null ? DateFormat('HH:mm').format(DateFormat('yyyy-MM-dd HH:mm:ss').parse(meeting.dateEnd!)) : '-';
+        final start = meeting.dateStart != null ? DateFormat('dd.MM.yyyy HH:mm').format(DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(meeting.dateStart!).toLocal()) : '-';
+        final end = meeting.dateEnd != null ? DateFormat('HH:mm').format(DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(meeting.dateEnd!).toLocal()) : '-';
 
         return Scaffold(
           appBar: AppBar(

@@ -1,4 +1,6 @@
-import 'dart:io';
+import 'dart:io' show File;
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
@@ -6,8 +8,6 @@ import '../services/api_service.dart';
 import '../models/krankentage.dart';
 import '../models/document.dart';
 import 'document_viewer_screen.dart';
-import '../core/constants.dart';
-import '../services/acl_service.dart';
 
 class KrankentageScreen extends StatefulWidget {
   const KrankentageScreen({Key? key}) : super(key: key);
@@ -18,8 +18,7 @@ class KrankentageScreen extends StatefulWidget {
 
 class _KrankentageScreenState extends State<KrankentageScreen> {
   final ApiService _apiService = ApiService();
-  final AclService _aclService = AclService();
-  late Future<List<Krankentage>> _krankentageFuture;
+  Future<List<Krankentage>>? _krankentageFuture;
 
   @override
   void initState() {
@@ -65,7 +64,7 @@ class _KrankentageScreenState extends State<KrankentageScreen> {
         ],
       ),
       body: FutureBuilder<List<Krankentage>>(
-        future: _krankentageFuture,
+        future: _krankentageFuture ?? Future.value([]),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -131,16 +130,16 @@ class _KrankentageScreenState extends State<KrankentageScreen> {
                               ),
                             ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(
-                                color: Colors.red.withOpacity(0.1),
+                                color: krank.statusColor.withOpacity(0.12),
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.red.withOpacity(0.5)),
+                                border: Border.all(color: krank.statusColor.withOpacity(0.5)),
                               ),
                               child: Text(
-                                krank.status,
+                                krank.displayStatus,
                                 style: TextStyle(
-                                  color: Colors.red.shade800,
+                                  color: krank.statusColor,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 12,
                                 ),
@@ -153,9 +152,11 @@ class _KrankentageScreenState extends State<KrankentageScreen> {
                           children: [
                             Icon(Icons.date_range, size: 16, color: Colors.grey.shade600),
                             const SizedBox(width: 6),
-                            Text(
-                              '${krank.dateStart != null ? krank.dateStart!.split(' ')[0] : "-"}  bis  ${krank.dateEnd != null ? krank.dateEnd!.split(' ')[0] : "-"}',
-                              style: TextStyle(color: Colors.grey.shade800),
+                            Expanded(
+                              child: Text(
+                                krank.formattedDateRange + (krank.kalendertage != null ? ' (${krank.kalendertage} ${krank.kalendertage == 1 ? "Tag" : "Tage"})' : ''),
+                                style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w500),
+                              ),
                             ),
                           ],
                         ),
@@ -210,7 +211,8 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
   final _apiService = ApiService();
   final _descController = TextEditingController();
   DateTimeRange? _selectedRange;
-  File? _selectedFile;
+  Uint8List? _fileBytes;
+  String? _fileName;
   bool _isSubmitting = false;
 
   Future<void> _pickDate() async {
@@ -230,11 +232,22 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+      withData: true,
     );
-    if (result != null && result.files.single.path != null) {
-      setState(() {
-        _selectedFile = File(result.files.single.path!);
-      });
+    if (result != null && result.files.isNotEmpty) {
+      final f = result.files.single;
+      Uint8List? bytes = f.bytes;
+      if (bytes == null && !kIsWeb && f.path != null) {
+        try {
+          bytes = await File(f.path!).readAsBytes();
+        } catch (_) {}
+      }
+      if (bytes != null) {
+        setState(() {
+          _fileBytes = bytes;
+          _fileName = f.name;
+        });
+      }
     }
   }
 
@@ -248,25 +261,25 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
 
     String? uploadedFileId;
 
-    if (_selectedFile != null) {
-      final bytes = await _selectedFile!.readAsBytes();
-      final ext = _selectedFile!.path.split('.').last.toLowerCase();
+    if (_fileBytes != null && _fileName != null) {
+      final ext = _fileName!.split('.').last.toLowerCase();
       String mimeType = 'application/pdf';
       if (ext == 'png') mimeType = 'image/png';
       if (ext == 'jpg' || ext == 'jpeg') mimeType = 'image/jpeg';
 
       uploadedFileId = await _apiService.uploadAttachment(
-        fileName: _selectedFile!.path.split('/').last.split('\\').last,
+        fileName: _fileName!,
         mimeType: mimeType,
-        bytes: bytes,
-        parentType: 'CKrankentage',
+        bytes: _fileBytes!,
+        parentType: 'CKrankenscheine',
         field: 'krankenschein',
       );
       
       if (uploadedFileId == null) {
-        setState(() => _isSubmitting = false);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Hochladen der AU-Bescheinigung.')));
+        if (mounted) {
+          setState(() => _isSubmitting = false);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Hochladen der AU-Bescheinigung.')));
+        }
         return;
       }
     }
@@ -284,15 +297,24 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
       krankenscheinId: uploadedFileId,
     );
 
+    if (!mounted) return;
     setState(() => _isSubmitting = false);
 
     if (success) {
-      if (!mounted) return;
       Navigator.pop(context, true);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Krankmeldung erfolgreich eingereicht!')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Krankmeldung erfolgreich eingereicht!'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } else {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Einreichen.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ Fehler beim Einreichen der Krankmeldung.'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -322,9 +344,9 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
           OutlinedButton.icon(
             onPressed: _pickFile,
             icon: const Icon(Icons.upload_file),
-            label: Text(_selectedFile == null 
+            label: Text(_fileName == null 
               ? 'AU-Bescheinigung hochladen (optional)' 
-              : 'Ausgewählt: ${_selectedFile!.path.split('/').last.split('\\').last}'),
+              : 'Ausgewählt: $_fileName'),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 16),
               alignment: Alignment.centerLeft,
@@ -368,61 +390,82 @@ class _UploadAUForm extends StatefulWidget {
 
 class __UploadAUFormState extends State<_UploadAUForm> {
   final _apiService = ApiService();
-  File? _selectedFile;
+  Uint8List? _fileBytes;
+  String? _fileName;
   bool _isSubmitting = false;
 
   Future<void> _pickFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+      withData: true,
     );
-    if (result != null && result.files.single.path != null) {
-      setState(() {
-        _selectedFile = File(result.files.single.path!);
-      });
+    if (result != null && result.files.isNotEmpty) {
+      final f = result.files.single;
+      Uint8List? bytes = f.bytes;
+      if (bytes == null && !kIsWeb && f.path != null) {
+        try {
+          bytes = await File(f.path!).readAsBytes();
+        } catch (_) {}
+      }
+      if (bytes != null) {
+        setState(() {
+          _fileBytes = bytes;
+          _fileName = f.name;
+        });
+      }
     }
   }
 
   Future<void> _submit() async {
-    if (_selectedFile == null) {
+    if (_fileBytes == null || _fileName == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bitte Datei auswählen')));
       return;
     }
 
     setState(() => _isSubmitting = true);
 
-    final bytes = await _selectedFile!.readAsBytes();
-    final ext = _selectedFile!.path.split('.').last.toLowerCase();
+    final ext = _fileName!.split('.').last.toLowerCase();
     String mimeType = 'application/pdf';
     if (ext == 'png') mimeType = 'image/png';
     if (ext == 'jpg' || ext == 'jpeg') mimeType = 'image/jpeg';
 
     final uploadedFileId = await _apiService.uploadAttachment(
-      fileName: _selectedFile!.path.split('/').last.split('\\').last,
+      fileName: _fileName!,
       mimeType: mimeType,
-      bytes: bytes,
-      parentType: 'CKrankentage',
+      bytes: _fileBytes!,
+      parentType: 'CKrankenscheine',
       field: 'krankenschein',
     );
     
     if (uploadedFileId == null) {
-      setState(() => _isSubmitting = false);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Hochladen der AU-Bescheinigung.')));
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Hochladen der AU-Bescheinigung.')));
+      }
       return;
     }
 
     final success = await _apiService.updateKrankentage(widget.krankId, uploadedFileId);
 
+    if (!mounted) return;
     setState(() => _isSubmitting = false);
 
     if (success) {
-      if (!mounted) return;
       Navigator.pop(context, true);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('AU-Bescheinigung erfolgreich nachgereicht!')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ AU-Bescheinigung erfolgreich nachgereicht!'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } else {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Zuweisen der AU.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ Fehler beim Zuweisen der AU-Bescheinigung.'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -440,9 +483,9 @@ class __UploadAUFormState extends State<_UploadAUForm> {
           OutlinedButton.icon(
             onPressed: _pickFile,
             icon: const Icon(Icons.upload_file),
-            label: Text(_selectedFile == null 
+            label: Text(_fileName == null 
               ? 'Datei auswählen (PDF/Bild)' 
-              : 'Ausgewählt: ${_selectedFile!.path.split('/').last.split('\\').last}'),
+              : 'Ausgewählt: $_fileName'),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 16),
               alignment: Alignment.centerLeft,

@@ -13,7 +13,7 @@ class MeetingListScreen extends StatefulWidget {
 
 class _MeetingListScreenState extends State<MeetingListScreen> {
   final ApiService _apiService = ApiService();
-  late Future<List<Meeting>> _meetingsFuture;
+  Future<List<Meeting>>? _meetingsFuture;
 
   @override
   void initState() {
@@ -52,7 +52,7 @@ class _MeetingListScreenState extends State<MeetingListScreen> {
         ],
       ),
       body: FutureBuilder<List<Meeting>>(
-        future: _meetingsFuture,
+        future: _meetingsFuture ?? Future.value([]),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -70,7 +70,7 @@ class _MeetingListScreenState extends State<MeetingListScreen> {
             itemCount: list.length,
             itemBuilder: (context, index) {
               final m = list[index];
-              final DateTime startDt = m.dateStart != null ? DateFormat('yyyy-MM-dd HH:mm:ss').parse(m.dateStart!) : DateTime.now();
+              final DateTime startDt = m.dateStart != null ? DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(m.dateStart!).toLocal() : DateTime.now();
               final String start = m.dateStart != null ? DateFormat('dd.MM.yyyy HH:mm').format(startDt) : '-';
               
               return Card(

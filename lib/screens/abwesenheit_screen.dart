@@ -3,7 +3,6 @@ import 'package:intl/intl.dart';
 import '../services/api_service.dart';
 import '../models/abwesenheit.dart';
 import '../core/constants.dart';
-import '../services/acl_service.dart';
 
 class AbwesenheitScreen extends StatefulWidget {
   const AbwesenheitScreen({Key? key}) : super(key: key);
@@ -14,8 +13,7 @@ class AbwesenheitScreen extends StatefulWidget {
 
 class _AbwesenheitScreenState extends State<AbwesenheitScreen> {
   final ApiService _apiService = ApiService();
-  final AclService _aclService = AclService();
-  late Future<List<Abwesenheit>> _abwesenheitFuture;
+  Future<List<Abwesenheit>>? _abwesenheitFuture;
 
   @override
   void initState() {
@@ -61,7 +59,7 @@ class _AbwesenheitScreenState extends State<AbwesenheitScreen> {
         ],
       ),
       body: FutureBuilder<List<Abwesenheit>>(
-        future: _abwesenheitFuture,
+        future: _abwesenheitFuture ?? Future.value([]),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -119,7 +117,7 @@ class _AbwesenheitScreenState extends State<AbwesenheitScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              '${item.dateStart != null ? DateFormat('dd.MM.yyyy HH:mm').format(DateFormat('yyyy-MM-dd HH:mm:ss').parse(item.dateStart!)) : '-'}  bis  ${item.dateEnd != null ? DateFormat('HH:mm').format(DateFormat('yyyy-MM-dd HH:mm:ss').parse(item.dateEnd!)) : '-'}',
+                              '${item.dateStart != null ? DateFormat('dd.MM.yyyy HH:mm').format(DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(item.dateStart!).toLocal()) : '-'}  bis  ${item.dateEnd != null ? DateFormat('HH:mm').format(DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(item.dateEnd!).toLocal()) : '-'}',
                               style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w500),
                             ),
                           ),

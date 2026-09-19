@@ -1,18 +1,17 @@
 import 'dart:io' show File;
 import 'dart:typed_data';
-import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../models/document.dart';
 import '../core/constants.dart';
 import '../core/server_config.dart';
 import '../services/secure_storage_service.dart';
 import '../utils/file_download.dart';
+import '../utils/native_web_pdf_viewer.dart';
 
 class DocumentViewerScreen extends StatefulWidget {
   final EspoDocument document;
@@ -50,8 +49,9 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
       }
       
       final url = '${ServerConfig().baseUrl}/?entryPoint=download&id=${widget.document.fileId}';
-      final response = await http.get(Uri.parse(url), headers: headers);
+      final response = await http.get(Uri.parse(url), headers: headers).timeout(const Duration(seconds: 15));
       
+      if (!mounted) return;
       if (response.statusCode == 200) {
         setState(() {
           _documentBytes = response.bodyBytes;
@@ -64,6 +64,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
         });
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'Verbindungsfehler: $e';
         _isLoading = false;
@@ -76,15 +77,10 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
     
     var fileName = widget.document.fileName ?? "document";
     if (!fileName.contains('.')) {
-      if (widget.document.type == 'Lohnabrechnung' || widget.document.type == 'SV-Meldung' || widget.document.type == 'Lohnsteuerbescheinigung') {
-        fileName += '.pdf';
-      } else {
-        fileName += '.pdf'; // Default fallback just in case
-      }
+      fileName += '.pdf';
     }
 
     if (kIsWeb) {
-      // On Web, use our custom dart:html implementation to trigger a real download
       try {
         final ext = fileName.split('.').last.toLowerCase();
         String mimeType = 'application/octet-stream';
@@ -94,6 +90,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
         
         await downloadFileWeb(_documentBytes!, fileName, mimeType);
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Download im Browser fehlgeschlagen.')),
         );
@@ -101,26 +98,83 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
       return;
     }
 
-    // Mobile platforms
+    // Native Mobile
     try {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/$fileName');
       await file.writeAsBytes(_documentBytes!);
-      
       await OpenFilex.open(file.path);
     } catch (e) {
-      print(e);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Fehler beim Öffnen/Speichern der Datei.')),
       );
     }
   }
 
+  /// Platform-aware PDF viewer:
+  /// - Desktop Web (Windows/Mac/Linux): native iframe via NativeWebPdfViewer
+  /// - Mobile Web (Android/iOS): button to open in browser tab
+  /// - Native App: SfPdfViewer
+  Widget _buildPdfView() {
+    if (kIsWeb) {
+      final isMobile = defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS;
+
+      if (isMobile) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.picture_as_pdf, size: 80, color: Color(0xFF1565C0)),
+                const SizedBox(height: 24),
+                const Text(
+                  'PDF-Vorschau',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Tippe auf das Browser-Symbol oben rechts\num das Dokument anzuzeigen.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey, fontSize: 14),
+                ),
+                const SizedBox(height: 32),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_browser),
+                  label: const Text('Im Browser öffnen'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  ),
+                  onPressed: () async {
+                    var fileName = widget.document.fileName ?? 'document.pdf';
+                    if (!fileName.contains('.')) fileName += '.pdf';
+                    final ext = fileName.split('.').last.toLowerCase();
+                    final mimeType = ext == 'pdf' ? 'application/pdf' : 'application/octet-stream';
+                    try {
+                      await viewFileWeb(_documentBytes!, mimeType);
+                    } catch (_) {}
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      } else {
+        // Desktop Web: embedded iframe with blob URL — works perfectly in Chrome/Edge/Firefox
+        return NativeWebPdfViewer(bytes: _documentBytes!);
+      }
+    }
+    // Native App (Android APK / iOS)
+    return SfPdfViewer.memory(_documentBytes!);
+  }
+
   @override
   Widget build(BuildContext context) {
     var ext = widget.document.fileName?.toLowerCase() ?? '';
     if (ext.isEmpty || !ext.contains('.')) {
-       ext = '.pdf'; // Default fallback for rendering logic
+       ext = '.pdf';
     }
     final isPdf = ext.endsWith('.pdf');
     final isImage = ext.endsWith('.jpg') || ext.endsWith('.jpeg') || ext.endsWith('.png');
@@ -170,7 +224,7 @@ class _DocumentViewerScreenState extends State<DocumentViewerScreen> {
             : _documentBytes == null 
                 ? const Center(child: Text('Leeres Dokument.'))
                 : (isPdf
-                    ? SfPdfViewer.memory(_documentBytes!)
+                    ? _buildPdfView()
                     : (isImage
                         ? Center(
                             child: InteractiveViewer(

@@ -34,7 +34,8 @@ class _AngestellteProfileScreenState extends State<AngestellteProfileScreen> {
       'fields': [
         ['firstName', 'personalnummer'],
         ['benutzername', 'lastName'],
-        ['vertragsart', 'einstellungsdatum', 'austrittsdatum'],
+        ['userconnexName', 'vertragsart'],
+        ['einstellungsdatum', 'austrittsdatum'],
         ':HEADER:Qualifikationen',
         'qualifikation',
         ['zertifikat34a', 'brandschutzZertifikat'],
@@ -135,10 +136,35 @@ class _AngestellteProfileScreenState extends State<AngestellteProfileScreen> {
   Future<void> _saveProfile() async {
     setState(() => _isSaving = true);
     
-    // Apply text changes from controllers
+    // Allowed self-service fields that an employee is permitted to change
+    const allowedFields = {
+      'phoneNumber',
+      'addressStreet',
+      'addressPostalCode',
+      'addressCity',
+      'addressCountry',
+      'addressState',
+      'emailAddress',
+      'notfallnummerName',
+      'notfallTelefonnummer',
+      'bankkontoInhaber',
+      'kreditinstitut',
+      'iBAN',
+      'bic',
+      'jackenGre',
+      'pullovergre',
+      'schuhgre',
+      'tShirtGre',
+      'westengre',
+      'description',
+    };
+
+    // Apply text changes from controllers (only if on whitelist)
     for (final entry in _controllers.entries) {
       final key = entry.key;
-      final text = entry.value.text;
+      if (!allowedFields.contains(key)) continue;
+
+      final text = entry.value.text.trim();
       final original = _angestellte!.rawData[key]?.toString() ?? '';
       
       if (text != original) {

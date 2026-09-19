@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 class AppConstants {
   // Server URL is now managed dynamically via ServerConfig
 
+  // App Version
+  static const String appVersion = '1.3.3';
+  static const int appBuildNumber = 17;
+
   // EspoCRM primary color hints (Slate / Dark Blue)
   static const Color primaryColor = Color(0xFF173D5D); // Espresso Dark Blue / Slate
   static const Color secondaryColor = Color(0xFF2FA2D1); // Light blue accents

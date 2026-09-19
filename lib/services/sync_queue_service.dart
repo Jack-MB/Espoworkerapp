@@ -1,22 +1,34 @@
 import 'dart:convert';
 import 'dart:async';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show ChangeNotifier, debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 
 /// A persistent sync queue that stores pending check-in/check-out updates
 /// locally and retries them when the network is available.
-class SyncQueueService {
+class SyncQueueService extends ChangeNotifier {
   static final SyncQueueService _instance = SyncQueueService._internal();
   factory SyncQueueService() => _instance;
-  SyncQueueService._internal();
+  SyncQueueService._internal() {
+    _initPendingCount();
+  }
 
   static const String _storageKey = 'pending_sync_queue';
   final ApiService _apiService = ApiService();
   Timer? _retryTimer;
   bool _isSyncing = false;
+  int _pendingCount = 0;
 
-  // Callback to notify the UI about sync state changes
+  int get pendingCount => _pendingCount;
+  bool get isSyncing => _isSyncing;
+
+  Future<void> _initPendingCount() async {
+    final queue = await _loadQueue();
+    _pendingCount = queue.length;
+    notifyListeners();
+  }
+
+  // Callback to notify the UI about sync state changes (backward compatibility)
   void Function(int pendingCount)? onSyncStateChanged;
 
   /// Add a pending sync item to the queue.
@@ -46,10 +58,38 @@ class SyncQueueService {
     processQueue();
   }
 
+  /// Add a pending Wachbuch note to the queue (offline support).
+  Future<void> enqueueWachbuchNote({
+    required String wachbuchId,
+    required String text,
+    List<String> attachmentIds = const [],
+    required String description,
+  }) async {
+    final item = {
+      'type': 'wachbuch_note',
+      'wachbuchId': wachbuchId,
+      'text': text,
+      'attachmentIds': attachmentIds,
+      'description': description,
+      'createdAt': DateTime.now().toIso8601String(),
+      'retryCount': 0,
+    };
+
+    final queue = await _loadQueue();
+    queue.add(item);
+    await _saveQueue(queue);
+
+    debugPrint('SyncQueue: Enqueued Wachbuch note for $wachbuchId ($description). Queue size: ${queue.length}');
+    onSyncStateChanged?.call(queue.length);
+
+    // Try to sync immediately
+    processQueue();
+  }
+
   /// Check if two data maps update the same fields
   bool _sameFields(dynamic a, Map<String, dynamic> b) {
     if (a is! Map) return false;
-    final aKeys = (a as Map).keys.toSet();
+    final aKeys = a.keys.toSet();
     final bKeys = b.keys.toSet();
     return aKeys.intersection(bKeys).isNotEmpty;
   }
@@ -84,31 +124,53 @@ class SyncQueueService {
       int successCount = 0;
 
       for (final item in queue) {
-        final slotId = item['slotId'] as String;
-        final data = Map<String, dynamic>.from(item['data'] as Map);
+        final itemType = item['type'] as String?;
         final retryCount = (item['retryCount'] as int?) ?? 0;
 
         try {
-          final success = await _apiService.patchSlot(slotId, data);
+          bool success = false;
+          if (itemType == 'wachbuch_note') {
+            final wbId = item['wachbuchId'] as String;
+            final text = item['text'] as String;
+            final attIds = List<String>.from(item['attachmentIds'] ?? []);
+            success = await _apiService.createNoteWithAttachments(wbId, text, attIds);
+          } else {
+            final slotId = item['slotId'] as String;
+            final data = Map<String, dynamic>.from(item['data'] as Map);
+            if (data.containsKey('checkin')) {
+              success = await _apiService.checkInSlot(slotId, checkInTime: data['checkin']);
+            } else if (data.containsKey('checkout')) {
+              success = await _apiService.checkOutSlot(slotId, checkOutTime: data['checkout']);
+            } else {
+              success = await _apiService.patchSlot(slotId, data);
+            }
+          }
+
           if (success) {
             successCount++;
-            debugPrint('SyncQueue: ✅ Synced $slotId successfully');
+            debugPrint('SyncQueue: ✅ Synced item successfully');
           } else {
-            // Server returned non-200 but no exception
             item['retryCount'] = retryCount + 1;
-            if (retryCount < 50) { // Max 50 retries (~25 min at 30s interval)
+            if (retryCount < 10) {
               remainingQueue.add(item);
             } else {
-              debugPrint('SyncQueue: ❌ Dropped $slotId after $retryCount retries');
+              debugPrint('SyncQueue: ❌ Dropped item after $retryCount retries');
             }
           }
         } catch (e) {
-          debugPrint('SyncQueue: ⚠️ Error syncing $slotId: $e');
+          final desc = item['description'] ?? item['slotId'] ?? 'item';
+          debugPrint('SyncQueue: ⚠️ Error syncing $desc: $e');
+          final errStr = e.toString();
+          // Unrecoverable authorization error -> drop immediately
+          if (errStr.contains('Berechtigung') || errStr.contains('403') || errStr.contains('deaktiviert')) {
+            debugPrint('SyncQueue: ❌ Dropped $desc due to permission or disabled feature: $e');
+            continue;
+          }
           item['retryCount'] = retryCount + 1;
-          if (retryCount < 50) {
+          if (retryCount < 10) {
             remainingQueue.add(item);
           } else {
-            debugPrint('SyncQueue: ❌ Dropped $slotId after $retryCount retries');
+            debugPrint('SyncQueue: ❌ Dropped $desc after $retryCount retries');
           }
         }
       }
@@ -139,6 +201,11 @@ class SyncQueueService {
     onSyncStateChanged?.call(0);
   }
 
+  /// Get all pending queue items with full metadata
+  Future<List<Map<String, dynamic>>> getPendingItems() async {
+    return await _loadQueue();
+  }
+
   Future<List<Map<String, dynamic>>> _loadQueue() async {
     final prefs = await SharedPreferences.getInstance();
     final rawJson = prefs.getString(_storageKey);
@@ -155,5 +222,7 @@ class SyncQueueService {
   Future<void> _saveQueue(List<Map<String, dynamic>> queue) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_storageKey, json.encode(queue));
+    _pendingCount = queue.length;
+    notifyListeners();
   }
 }

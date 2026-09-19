@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -61,11 +62,59 @@ class NotificationService {
       );
       await androidPlugin.createNotificationChannel(channel);
       
-      // On Android 13+, we must request permission
+      // On Android 13+, we request permission
       await androidPlugin.requestNotificationsPermission();
     }
 
     _initialized = true;
+  }
+
+  Future<bool> areNotificationsEnabled() async {
+    if (kIsWeb) return false;
+    try {
+      if (Platform.isAndroid && _plugin != null) {
+        final androidPlugin = _plugin!.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+        if (androidPlugin != null) {
+          final enabled = await androidPlugin.areNotificationsEnabled();
+          return enabled ?? false;
+        }
+      } else if (Platform.isIOS && _plugin != null) {
+        final iosPlugin = _plugin!.resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>();
+        if (iosPlugin != null) {
+          final perms = await iosPlugin.checkPermissions();
+          return perms?.isEnabled ?? false;
+        }
+      }
+    } catch (_) {}
+    return true;
+  }
+
+  Future<bool> requestPermission() async {
+    if (kIsWeb) return false;
+    try {
+      if (Platform.isAndroid && _plugin != null) {
+        final androidPlugin = _plugin!.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+        if (androidPlugin != null) {
+          final granted = await androidPlugin.requestNotificationsPermission();
+          return granted ?? false;
+        }
+      } else if (Platform.isIOS && _plugin != null) {
+        final iosPlugin = _plugin!.resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>();
+        if (iosPlugin != null) {
+          final granted = await iosPlugin.requestPermissions(
+            alert: true,
+            badge: true,
+            sound: true,
+          );
+          return granted ?? false;
+        }
+      }
+    } catch (_) {}
+    return false;
   }
 
   void _handleNotificationPayload(String payload) {

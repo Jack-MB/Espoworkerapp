@@ -8,6 +8,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/login_screen.dart';
 import 'screens/admin_login_screen.dart';
+import 'screens/self_checkin_screen.dart';
 import 'providers/theme_provider.dart';
 import 'core/app_theme.dart';
 import 'services/acl_service.dart';
@@ -36,19 +37,22 @@ void main() async {
     }
 
     try {
-      if (Platform.isAndroid) {
+      if (Platform.isAndroid || Platform.isIOS) {
         // Initialize Firebase messaging listeners & handlers
         await FirebaseService().init();
         
         // Initialize local notifications
         await NotificationService().initialize();
-        // Initialize background worker
+      }
+
+      if (Platform.isAndroid) {
+        // Initialize background worker (Android only)
         await PollingService().initialize();
         // Start polling every 15 minutes (Android minimum)
         await PollingService().schedulePolling(const Duration(minutes: 15));
       }
     } catch (e) {
-      debugPrint('Android services init error: $e');
+      debugPrint('Native services init error: $e');
     }
   }
 
@@ -94,6 +98,7 @@ class EspoWorkerApp extends StatelessWidget {
       home: const LoginScreen(),
       routes: {
         '/adminlogin': (context) => const AdminLoginScreen(),
+        '/selfcheckin': (context) => const SelfCheckinScreen(),
       },
     );
   }

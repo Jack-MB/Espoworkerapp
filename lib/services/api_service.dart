@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:intl/intl.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/server_config.dart';
 import 'secure_storage_service.dart';
 import '../models/wachbuch.dart';
@@ -20,14 +22,36 @@ import '../models/email.dart';
 import '../models/email_template.dart';
 import '../models/chat_room.dart';
 import '../models/chat_message.dart';
+import '../models/arbeitszeitkonto.dart';
+
+
+class _HttpWithTimeout {
+  static const Duration _timeout = Duration(seconds: 15);
+
+  static Future<http.Response> get(Uri url, {Map<String, String>? headers}) =>
+      http.get(url, headers: headers).timeout(_timeout);
+
+  static Future<http.Response> post(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      http.post(url, headers: headers, body: body, encoding: encoding).timeout(_timeout);
+
+  static Future<http.Response> put(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      http.put(url, headers: headers, body: body, encoding: encoding).timeout(_timeout);
+
+  static Future<http.Response> patch(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      http.patch(url, headers: headers, body: body, encoding: encoding).timeout(_timeout);
+}
 
 class ApiService {
   final SecureStorageService _storageService = SecureStorageService();
+  static const String _cachedSlotsKey = 'cached_slots_payload_v1';
+  static const String _cachedWachbuchsKey = 'cached_wachbuchs_payload_v1';
+  bool _isLastSlotsFromCache = false;
+  bool get isLastSlotsFromCache => _isLastSlotsFromCache;
 
   Future<bool> pingServer() async {
     try {
       final url = Uri.parse('${ServerConfig().apiUrl}/App/user');
-      final response = await http.get(url).timeout(const Duration(seconds: 5));
+      final response = await _HttpWithTimeout.get(url).timeout(const Duration(seconds: 5));
       // 200, 401, 403 all mean "server reachable"
       return response.statusCode < 500;
     } catch (_) {
@@ -41,7 +65,7 @@ class ApiService {
     try {
       final normalized = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
       final url = Uri.parse('$normalized/api/v1/App/user');
-      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      final response = await _HttpWithTimeout.get(url).timeout(const Duration(seconds: 8));
       // 200, 401, 403 all mean "server is there and running EspoCRM"
       return response.statusCode < 500;
     } catch (_) {
@@ -64,7 +88,7 @@ class ApiService {
         'X-Api-Key': password
       };
       try {
-        final response = await http.get(url, headers: headers);
+        final response = await _HttpWithTimeout.get(url, headers: headers);
         if (response.statusCode == 200) {
           await _storageService.saveToken('ApiKey $password');
           await _storageService.saveUsername(username);
@@ -81,7 +105,7 @@ class ApiService {
     final String basicAuth = 'Basic ' + base64Encode(utf8.encode('$username:$password'));
     
     try {
-      final response = await http.get(
+      final response = await _HttpWithTimeout.get(
         url,
         headers: {
           'Authorization': basicAuth,
@@ -106,7 +130,7 @@ class ApiService {
         if (angestelltexId == null && userId != null) {
           try {
             final qUrl = Uri.parse('${ServerConfig().apiUrl}/Angestellte?maxSize=1&where[0][type]=equals&where[0][attribute]=assignedUserId&where[0][value]=$userId');
-            final qRes = await http.get(qUrl, headers: {'Authorization': basicAuth, 'Accept': 'application/json'});
+            final qRes = await _HttpWithTimeout.get(qUrl, headers: {'Authorization': basicAuth, 'Accept': 'application/json'});
             if (qRes.statusCode == 200) {
               final qData = json.decode(qRes.body);
               if (qData['list'] != null && qData['list'].isNotEmpty) {
@@ -122,7 +146,7 @@ class ApiService {
           if (angestelltexId == null) {
             try {
               final qUrl2 = Uri.parse('${ServerConfig().apiUrl}/Angestellte?maxSize=1&where[0][type]=equals&where[0][attribute]=kpUserId&where[0][value]=$userId');
-              final qRes2 = await http.get(qUrl2, headers: {'Authorization': basicAuth, 'Accept': 'application/json'});
+              final qRes2 = await _HttpWithTimeout.get(qUrl2, headers: {'Authorization': basicAuth, 'Accept': 'application/json'});
               if (qRes2.statusCode == 200) {
                 final qData2 = json.decode(qRes2.body);
                 if (qData2['list'] != null && qData2['list'].isNotEmpty) {
@@ -156,7 +180,7 @@ class ApiService {
         if (userId != null) {
           try {
              final userUrl = Uri.parse('${ServerConfig().apiUrl}/User/$userId');
-             final userResp = await http.get(userUrl, headers: {
+             final userResp = await _HttpWithTimeout.get(userUrl, headers: {
                 'Authorization': basicAuth,
                 'Accept': 'application/json',
              });
@@ -213,7 +237,7 @@ class ApiService {
 
   Future<Map<String, dynamic>?> getObjektCoordinates(String id) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Objekte/$id?select=latk,lonK,rad');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       final latVal = data['latk'];
@@ -247,7 +271,7 @@ class ApiService {
     final url = Uri.parse(
         '${ServerConfig().apiUrl}/Slots/$id'
         '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,color,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Slot.fromJson(json.decode(response.body));
     }
@@ -256,7 +280,7 @@ class ApiService {
 
   Future<dynamic> getMetadata() async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Metadata');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -265,7 +289,7 @@ class ApiService {
 
   Future<bool> patchSlot(String slotId, Map<String, dynamic> data) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Slots/$slotId');
-    final response = await http.patch(
+    final response = await _HttpWithTimeout.patch(
       url,
       headers: await _getHeaders(),
       body: json.encode(data),
@@ -277,49 +301,160 @@ class ApiService {
     return true;
   }
 
-  /// Nimmt eine Schicht an — nutzt Custom Server Action mit Validierung.
-  /// Fällt bei älteren Server-Versionen auf einfaches PATCH zurück.
-  Future<bool> annehmeSchicht(String slotId) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/$slotId/action/annehmen');
+  /// Check-in für eine Schicht über dedizierte Server-Action mit Ampel-Berechnung
+  Future<bool> checkInSlot(String slotId, {String? checkInTime}) async {
+    final primaryUrl = Uri.parse('${ServerConfig().apiUrl}/Slots/action/checkin');
     try {
-      final response = await http.post(url, headers: await _getHeaders(), body: '{}');
+      final headers = await _getHeaders();
+      final body = json.encode({
+        'slotId': slotId,
+        if (checkInTime != null) 'checkin': checkInTime,
+      });
+      final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: body);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) return true;
+        throw Exception(data['message'] ?? 'Check-in fehlgeschlagen');
+      }
+      if (response.statusCode == 403) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? 'Keine Berechtigung zum Einchecken');
+      }
+    } catch (e) {
+      if (e.toString().contains('Berechtigung') || e.toString().contains('deaktiviert')) {
+        rethrow;
+      }
+      debugPrint('checkInSlot action endpoint failed: $e, trying fallback');
+    }
+
+    // Fallback: direct patchSlot (Admin / Legacy)
+    final checkinVal = checkInTime ?? DateTime.now().toUtc().toString().split('.')[0];
+    return patchSlot(slotId, {
+      'checkin': checkinVal,
+      'cI': '🟢',
+      'status': 'Durchgeführt',
+    });
+  }
+
+  /// Check-out für eine Schicht über dedizierte Server-Action
+  Future<bool> checkOutSlot(String slotId, {String? checkOutTime}) async {
+    final primaryUrl = Uri.parse('${ServerConfig().apiUrl}/Slots/action/checkout');
+    try {
+      final headers = await _getHeaders();
+      final body = json.encode({
+        'slotId': slotId,
+        if (checkOutTime != null) 'checkout': checkOutTime,
+      });
+      final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: body);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) return true;
+        throw Exception(data['message'] ?? 'Check-out fehlgeschlagen');
+      }
+      if (response.statusCode == 403) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? 'Keine Berechtigung zum Auschecken');
+      }
+    } catch (e) {
+      if (e.toString().contains('Berechtigung') || e.toString().contains('deaktiviert')) {
+        rethrow;
+      }
+      debugPrint('checkOutSlot action endpoint failed: $e, trying fallback');
+    }
+
+    // Fallback: direct patchSlot (Admin / Legacy)
+    final checkoutVal = checkOutTime ?? DateTime.now().toUtc().toString().split('.')[0];
+    return patchSlot(slotId, {'checkout': checkoutVal});
+  }
+
+  /// Nimmt eine Schicht an — nutzt Custom Server Action mit Validierung.
+  Future<bool> annehmeSchicht(String slotId) async {
+    // 1. Primärer Endpunkt: SchichtAnnahme Controller
+    final primaryUrl = Uri.parse('${ServerConfig().apiUrl}/SchichtAnnahme/action/annehmen');
+    try {
+      final headers = await _getHeaders();
+      final body = json.encode({'slotId': slotId});
+      final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: body);
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) return true;
         throw Exception(data['message'] ?? 'Unbekannter Fehler');
       }
-      if (response.statusCode == 404) {
-        // Custom Action noch nicht deployed — Fallback auf PATCH
-        debugPrint('annehmeSchicht: Custom Action nicht verfügbar, Fallback auf PATCH');
-        return patchSlot(slotId, {'annahmeStatus': 'Angenommen'});
+      if (response.statusCode == 403) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? 'Keine Berechtigung oder Zeitkonflikt');
+      }
+    } catch (e) {
+      if (e.toString().contains('Zeitkonflikt') || e.toString().contains('Berechtigung')) {
+        rethrow;
+      }
+      debugPrint('annehmeSchicht primary endpoint failed: $e, trying fallback');
+    }
+
+    // 2. Fallback-Endpunkt: Slots Controller
+    final fallbackUrl = Uri.parse('${ServerConfig().apiUrl}/Slots/$slotId/action/annehmen');
+    try {
+      final response = await _HttpWithTimeout.post(fallbackUrl, headers: await _getHeaders(), body: '{}');
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) return true;
+        throw Exception(data['message'] ?? 'Unbekannter Fehler');
+      }
+      if (response.statusCode == 403) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? 'Keine Berechtigung oder Zeitkonflikt');
       }
       throw Exception('Server-Fehler: ${response.statusCode} – ${response.body}');
     } catch (e) {
-      // Netzwerkfehler — Fallback auf PATCH
-      debugPrint('annehmeSchicht action failed: $e, falling back to PATCH');
-      return patchSlot(slotId, {'annahmeStatus': 'Angenommen'});
+      debugPrint('annehmeSchicht fallback failed: $e');
+      rethrow;
     }
   }
 
   /// Lehnt eine Schicht ab — nutzt Custom Server Action.
-  Future<bool> ablehneSchicht(String slotId, {String? grund}) async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/$slotId/action/ablehnen');
+  Future<bool> ablehneSchicht(String slotId, {String? grund, String? kommentar}) async {
+    final finalGrund = grund ?? kommentar ?? '';
+
+    // 1. Primärer Endpunkt: SchichtAnnahme Controller
+    final primaryUrl = Uri.parse('${ServerConfig().apiUrl}/SchichtAnnahme/action/ablehnen');
     try {
-      final body = json.encode(grund != null ? {'grund': grund} : {});
-      final response = await http.post(url, headers: await _getHeaders(), body: body);
+      final headers = await _getHeaders();
+      final body = json.encode({'slotId': slotId, 'kommentar': finalGrund});
+      final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: body);
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) return true;
         throw Exception(data['message'] ?? 'Unbekannter Fehler');
       }
-      if (response.statusCode == 404) {
-        debugPrint('ablehneSchicht: Custom Action nicht verfügbar, Fallback auf PATCH');
-        return patchSlot(slotId, {'annahmeStatus': 'Abgelehnt'});
+      if (response.statusCode == 403) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? 'Keine Berechtigung zum Ablehnen');
+      }
+    } catch (e) {
+      if (e.toString().contains('interne') || e.toString().contains('Berechtigung')) {
+        rethrow;
+      }
+      debugPrint('ablehneSchicht primary endpoint failed: $e, trying fallback');
+    }
+
+    // 2. Fallback-Endpunkt: Slots Controller
+    final fallbackUrl = Uri.parse('${ServerConfig().apiUrl}/Slots/$slotId/action/ablehnen');
+    try {
+      final body = json.encode(finalGrund.isNotEmpty ? {'grund': finalGrund} : {});
+      final response = await _HttpWithTimeout.post(fallbackUrl, headers: await _getHeaders(), body: body);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) return true;
+        throw Exception(data['message'] ?? 'Unbekannter Fehler');
+      }
+      if (response.statusCode == 403) {
+        final data = json.decode(response.body);
+        throw Exception(data['message'] ?? 'Keine Berechtigung');
       }
       throw Exception('Server-Fehler: ${response.statusCode} – ${response.body}');
     } catch (e) {
-      debugPrint('ablehneSchicht action failed: $e, falling back to PATCH');
-      return patchSlot(slotId, {'annahmeStatus': 'Abgelehnt'});
+      debugPrint('ablehneSchicht fallback failed: $e');
+      rethrow;
     }
   }
 
@@ -337,7 +472,7 @@ class ApiService {
 
     final url = Uri.parse('${ServerConfig().apiUrl}/Slots/action/delta?since=${Uri.encodeComponent(sinceStr)}');
     try {
-      final response = await http.get(url, headers: await _getHeaders());
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['list'] != null) {
@@ -363,7 +498,7 @@ class ApiService {
     // Versuche Custom Action
     final actionUrl = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$angestellteId/action/azkSaldo');
     try {
-      final response = await http.get(actionUrl, headers: await _getHeaders());
+      final response = await _HttpWithTimeout.get(actionUrl, headers: await _getHeaders());
       if (response.statusCode == 200) return json.decode(response.body);
     } catch (_) {}
 
@@ -378,11 +513,7 @@ class ApiService {
       for (final s in slots) {
         if (s.stundenanzahl != null) sollStunden += s.stundenanzahl!;
         if (s.checkin != null && s.checkout != null) {
-          try {
-            final fmt = 'yyyy-MM-dd HH:mm:ss';
-            // Simplified: count only slots with both timestamps
-            istStunden += s.stundenanzahl ?? 0;
-          } catch (_) {}
+          istStunden += s.stundenanzahl ?? 0;
         }
       }
       return {
@@ -399,31 +530,58 @@ class ApiService {
 
   Future<List<Wachbuch>> getWachbuchs() async {
     final url = Uri.parse('${ServerConfig().apiUrl}/CWachbuch?maxSize=50&orderBy=createdAt&order=desc');
-    final response = await http.get(url, headers: await _getHeaders());
-    debugPrint('getWachbuchs status: ${response.statusCode}');
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['list'] != null) {
-        final result = <Wachbuch>[];
-        for (var e in data['list']) {
+    try {
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      debugPrint('getWachbuchs status: ${response.statusCode}');
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
           try {
-            result.add(Wachbuch.fromJson(e));
-          } catch (err, stack) {
-            debugPrint('Error parsing Wachbuch $err\n$stack\nJSON: $e');
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_cachedWachbuchsKey, response.body);
+          } catch (_) {}
+          final result = <Wachbuch>[];
+          for (var e in data['list']) {
+            try {
+              result.add(Wachbuch.fromJson(e));
+            } catch (err, stack) {
+              debugPrint('Error parsing Wachbuch $err\n$stack\nJSON: $e');
+            }
           }
+          return result;
         }
-        return result;
+      } else {
+        debugPrint('getWachbuchs error body: ${response.body}');
       }
-    } else {
-      debugPrint('getWachbuchs error body: ${response.body}');
+    } catch (e) {
+      debugPrint('Network error in getWachbuchs: $e. Falling back to offline cache.');
     }
+
+    // Offline cache fallback
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_cachedWachbuchsKey);
+      if (cached != null && cached.isNotEmpty) {
+        final data = json.decode(cached);
+        if (data['list'] != null) {
+          final result = <Wachbuch>[];
+          for (var e in data['list']) {
+            try {
+              result.add(Wachbuch.fromJson(e));
+            } catch (_) {}
+          }
+          return result;
+        }
+      }
+    } catch (_) {}
+
     return [];
   }
 
   /// Fetches a single Wachbuch record by ID (includes dateinFotos* fields).
   Future<Wachbuch?> getWachbuchById(String id) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/CWachbuch/$id');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Wachbuch.fromJson(json.decode(response.body));
     }
@@ -434,7 +592,7 @@ class ApiService {
     final url = Uri.parse('${ServerConfig().apiUrl}/App/user');
     final headers = await _getHeaders();
     try {
-      final response = await http.get(url, headers: headers);
+      final response = await _HttpWithTimeout.get(url, headers: headers);
       if (response.statusCode == 200) {
         return json.decode(response.body);
       }
@@ -475,13 +633,42 @@ class ApiService {
       },
     );
 
-    final response = await http.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['list'] != null) {
-        return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+    try {
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          _isLastSlotsFromCache = false;
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_cachedSlotsKey, response.body);
+            await prefs.setString('${_cachedSlotsKey}_time', DateTime.now().toIso8601String());
+          } catch (e) {
+            debugPrint('Error saving slots cache: $e');
+          }
+          return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+        }
       }
+    } catch (e) {
+      debugPrint('Network error in getSlots: $e. Falling back to offline cache.');
     }
+
+    // Offline cache fallback
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedJson = prefs.getString(_cachedSlotsKey);
+      if (cachedJson != null && cachedJson.isNotEmpty) {
+        final data = json.decode(cachedJson);
+        if (data['list'] != null) {
+          _isLastSlotsFromCache = true;
+          debugPrint('Serving ${data['list'].length} slots from offline cache');
+          return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+        }
+      }
+    } catch (cacheErr) {
+      debugPrint('Error reading slots cache: $cacheErr');
+    }
+
     return [];
   }
 
@@ -506,7 +693,7 @@ class ApiService {
         'select': 'id,post,type,createdAt,createdById,createdByName,parentType,parentId,attachmentsIds,attachmentsNames',
       },
     );
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -525,7 +712,7 @@ class ApiService {
       'parentType': 'CWachbuch',
       'parentId': wachbuchId,
     });
-    final response = await http.post(url, headers: headers, body: body);
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
     return response.statusCode == 200 || response.statusCode == 201;
   }
 
@@ -549,7 +736,7 @@ class ApiService {
       'field': field,
       'file': dataUri,
     });
-    final response = await http.post(url, headers: headers, body: body);
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
     debugPrint('uploadAttachment status: ${response.statusCode}');
     debugPrint('uploadAttachment body: ${response.body}');
     if (response.statusCode == 200 || response.statusCode == 201) {
@@ -574,7 +761,7 @@ class ApiService {
       'parentId': wachbuchId,
       if (attachmentIds.isNotEmpty) 'attachmentsIds': attachmentIds,
     });
-    final response = await http.post(url, headers: headers, body: body);
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
     debugPrint('createNote status: ${response.statusCode}');
     debugPrint('createNote body: ${response.body}');
     return response.statusCode == 200 || response.statusCode == 201;
@@ -585,7 +772,7 @@ class ApiService {
     if (token == null) return;
     try {
       final url = Uri.parse('${ServerConfig().apiUrl}/CWachbuch/$id');
-      await http.put(
+      await _HttpWithTimeout.put(
         url,
         headers: {'Authorization': token, 'Content-Type': 'application/json'},
         body: json.encode({'modifiedAt': DateTime.now().toUtc().toIso8601String()}),
@@ -595,7 +782,7 @@ class ApiService {
 
   Future<List<Urlaub>> getUrlaubs() async {
     final url = Uri.parse('${ServerConfig().apiUrl}/CUrlaube?maxSize=100&orderBy=createdAt&order=desc');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -607,7 +794,7 @@ class ApiService {
 
   Future<List<Krankentage>> getKrankentage() async {
     final url = Uri.parse('${ServerConfig().apiUrl}/CKrankenscheine?maxSize=100&orderBy=createdAt&order=desc');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -630,7 +817,7 @@ class ApiService {
       '&where%5B1%5D%5Btype%5D=lessThanOrEquals&where%5B1%5D%5Battribute%5D=dateStart&where%5B1%5D%5Bvalue%5D=$toStr'
       '&orderBy=dateStart&order=asc',
     );
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -640,6 +827,65 @@ class ApiService {
     return [];
   }
 
+  /// Resolves and caches the Angestellte record linked to the current user
+  Future<bool> resolveCurrentUserAngestellte() async {
+    try {
+      final headers = await _getHeaders();
+      final userId = await _storageService.getAssignedUserId();
+      final username = await _storageService.getUsername();
+
+      String? targetUserId = userId;
+      if (targetUserId == null && username != null && username.isNotEmpty) {
+        final uUrl = Uri.parse('${ServerConfig().apiUrl}/User?where[0][type]=equals&where[0][attribute]=userName&where[0][value]=${Uri.encodeComponent(username)}');
+        final uRes = await _HttpWithTimeout.get(uUrl, headers: headers);
+        if (uRes.statusCode == 200) {
+          final uData = json.decode(uRes.body);
+          if (uData['list'] != null && (uData['list'] as List).isNotEmpty) {
+            targetUserId = uData['list'][0]['id'];
+            if (targetUserId != null) {
+              await _storageService.saveAssignedUserId(targetUserId);
+            }
+          }
+        }
+      }
+
+      if (targetUserId == null) return false;
+
+      // Query Angestellte by assignedUserId
+      final qUrl = Uri.parse('${ServerConfig().apiUrl}/Angestellte?maxSize=1&where[0][type]=equals&where[0][attribute]=assignedUserId&where[0][value]=$targetUserId');
+      final qRes = await _HttpWithTimeout.get(qUrl, headers: headers);
+      if (qRes.statusCode == 200) {
+        final qData = json.decode(qRes.body);
+        if (qData['list'] != null && (qData['list'] as List).isNotEmpty) {
+          final ang = qData['list'][0];
+          await _storageService.saveAngestellteId(ang['id']);
+          if (ang['name'] != null) {
+            await _storageService.saveAngestellteName(ang['name']);
+          }
+          return true;
+        }
+      }
+
+      // Second fallback: kpUserId
+      final qUrl2 = Uri.parse('${ServerConfig().apiUrl}/Angestellte?maxSize=1&where[0][type]=equals&where[0][attribute]=kpUserId&where[0][value]=$targetUserId');
+      final qRes2 = await _HttpWithTimeout.get(qUrl2, headers: headers);
+      if (qRes2.statusCode == 200) {
+        final qData2 = json.decode(qRes2.body);
+        if (qData2['list'] != null && (qData2['list'] as List).isNotEmpty) {
+          final ang2 = qData2['list'][0];
+          await _storageService.saveAngestellteId(ang2['id']);
+          if (ang2['name'] != null) {
+            await _storageService.saveAngestellteName(ang2['name']);
+          }
+          return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('resolveCurrentUserAngestellte error: $e');
+    }
+    return false;
+  }
+
   Future<bool> createUrlaub({
     required String dateStart,
     required String dateEnd,
@@ -647,24 +893,40 @@ class ApiService {
   }) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/CUrlaube');
     final headers = await _getHeaders();
-    final angestellteId = await _storageService.getAngestellteId();
-    final assignedUserId = await _storageService.getAssignedUserId();
-    final angestellteName = await _storageService.getAngestellteName() ?? '';
-    
+    String? angestellteId = await _storageService.getAngestellteId();
+    String? assignedUserId = await _storageService.getAssignedUserId();
+    String? angestellteName = await _storageService.getAngestellteName();
+
+    if (angestellteId == null || angestellteId.isEmpty) {
+      await resolveCurrentUserAngestellte();
+      angestellteId = await _storageService.getAngestellteId();
+      assignedUserId = await _storageService.getAssignedUserId();
+      angestellteName = await _storageService.getAngestellteName();
+    }
+
+    if (angestellteId == null || angestellteId.isEmpty) {
+      debugPrint('createUrlaub error: Keine verknüpfte Angestellte-Entität gefunden.');
+      return false;
+    }
+
+    final name = (angestellteName != null && angestellteName.isNotEmpty)
+        ? 'Urlaub $angestellteName'
+        : 'Urlaubsantrag';
+
     final body = json.encode({
-      'name': 'Urlaub $angestellteName'.trim(),
+      'name': name.trim(),
       'status': 'In Bearbeitung',
       'dateStart': dateStart, // e.g. "2026-03-20 00:00:00"
       'dateEnd': dateEnd,   // e.g. "2026-03-20 23:59:59"
       'description': description,
       'isAllDay': true, // Standard for vacation
-      if (angestellteId != null) 'parentId': angestellteId,
-      if (angestellteId != null) 'parentType': 'Angestellte',
-      if (assignedUserId != null) 'assignedUserId': assignedUserId,
+      'parentId': angestellteId,
+      'parentType': 'Angestellte',
+      if (assignedUserId != null && assignedUserId.isNotEmpty) 'assignedUserId': assignedUserId,
     });
-    
-    final response = await http.post(url, headers: headers, body: body);
-    debugPrint('createUrlaub response: ${response.statusCode}');
+
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
+    debugPrint('createUrlaub response: ${response.statusCode} - ${response.body}');
     return response.statusCode == 200 || response.statusCode == 201;
   }
 
@@ -676,25 +938,41 @@ class ApiService {
   }) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/CKrankenscheine');
     final headers = await _getHeaders();
-    final angestellteId = await _storageService.getAngestellteId();
-    final assignedUserId = await _storageService.getAssignedUserId();
-    final angestellteName = await _storageService.getAngestellteName() ?? '';
-    
+    String? angestellteId = await _storageService.getAngestellteId();
+    String? assignedUserId = await _storageService.getAssignedUserId();
+    String? angestellteName = await _storageService.getAngestellteName();
+
+    if (angestellteId == null || angestellteId.isEmpty) {
+      await resolveCurrentUserAngestellte();
+      angestellteId = await _storageService.getAngestellteId();
+      assignedUserId = await _storageService.getAssignedUserId();
+      angestellteName = await _storageService.getAngestellteName();
+    }
+
+    if (angestellteId == null || angestellteId.isEmpty) {
+      debugPrint('createKrankentage error: Keine verknüpfte Angestellte-Entität gefunden.');
+      return false;
+    }
+
+    final name = (angestellteName != null && angestellteName.isNotEmpty)
+        ? 'Krank $angestellteName'
+        : 'Krankmeldung';
+
     final body = json.encode({
-      'name': 'Krank $angestellteName'.trim(),
+      'name': name.trim(),
       'status': 'Planned', // Default typically used for illness in Espo
       'dateStart': dateStart,
       'dateEnd': dateEnd,
       'description': description,
       'isAllDay': true,
-      if (krankenscheinId != null) 'krankenscheinId': krankenscheinId,
-      if (angestellteId != null) 'parentId': angestellteId,
-      if (angestellteId != null) 'parentType': 'Angestellte',
-      if (assignedUserId != null) 'assignedUserId': assignedUserId,
+      if (krankenscheinId != null && krankenscheinId.isNotEmpty) 'krankenscheinId': krankenscheinId,
+      'parentId': angestellteId,
+      'parentType': 'Angestellte',
+      if (assignedUserId != null && assignedUserId.isNotEmpty) 'assignedUserId': assignedUserId,
     });
-    
-    final response = await http.post(url, headers: headers, body: body);
-    debugPrint('createKrankentage response: ${response.statusCode}');
+
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
+    debugPrint('createKrankentage response: ${response.statusCode} - ${response.body}');
     return response.statusCode == 200 || response.statusCode == 201;
   }
 
@@ -704,13 +982,15 @@ class ApiService {
     final body = json.encode({
       'krankenscheinId': krankenscheinId,
     });
-    final response = await http.put(url, headers: headers, body: body);
-    return response.statusCode == 200;
+    final patchResponse = await _HttpWithTimeout.patch(url, headers: headers, body: body);
+    if (patchResponse.statusCode == 200) return true;
+    final putResponse = await _HttpWithTimeout.put(url, headers: headers, body: body);
+    return putResponse.statusCode == 200;
   }
 
   Future<List<Angestellte>> getAngestellte() async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte?maxSize=100&orderBy=name&order=asc');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -722,7 +1002,7 @@ class ApiService {
 
   Future<Angestellte?> getAngestellteById(String id) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$id');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Angestellte.fromJson(json.decode(response.body));
     }
@@ -733,13 +1013,13 @@ class ApiService {
     final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$id');
     final headers = await _getHeaders();
     final body = json.encode(updates);
-    final response = await http.put(url, headers: headers, body: body);
+    final response = await _HttpWithTimeout.put(url, headers: headers, body: body);
     return response.statusCode == 200;
   }
 
   Future<List<DocumentFolder>> getDocumentFolders() async {
     final url = Uri.parse('${ServerConfig().apiUrl}/DocumentFolder?maxSize=100&orderBy=name&order=asc');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -755,7 +1035,7 @@ class ApiService {
       urlStr += '&where[0][type]=equals&where[0][attribute]=folderId&where[0][value]=$folderId';
     }
     final url = Uri.parse(urlStr);
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -766,8 +1046,8 @@ class ApiService {
   }
 
   Future<List<EspoNotification>> getNotifications() async {
-    final url = Uri.parse('${ServerConfig().apiUrl}/Notification?maxSize=20');
-    final response = await http.get(url, headers: await _getHeaders());
+    final url = Uri.parse('${ServerConfig().apiUrl}/Notification?maxSize=50&orderBy=createdAt&order=desc');
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -777,17 +1057,39 @@ class ApiService {
     return [];
   }
 
+  Future<int> getUnreadNotificationCount() async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Notification/action/notReadCount');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        return int.tryParse(response.body.trim()) ?? 0;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  Future<bool> markAllNotificationsRead() async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Notification/action/markAllRead');
+      final headers = await _getHeaders();
+      final response = await _HttpWithTimeout.post(url, headers: headers, body: '{}');
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> markNotificationRead(String id) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Notification/$id');
     final headers = await _getHeaders();
     headers['Content-Type'] = 'application/json';
-    final response = await http.put(url, headers: headers, body: json.encode({'read': true}));
+    final response = await _HttpWithTimeout.put(url, headers: headers, body: json.encode({'read': true}));
     return response.statusCode == 200;
   }
 
   Future<List<Abwesenheit>> getAbwesenheiten() async {
     final url = Uri.parse('${ServerConfig().apiUrl}/CAbwesenheitsnotizen?maxSize=100&orderBy=dateStart&order=desc');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -822,13 +1124,13 @@ class ApiService {
       if (assignedUserId != null) 'assignedUserId': assignedUserId,
     });
     
-    final response = await http.post(url, headers: headers, body: body);
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
     return response.statusCode == 200 || response.statusCode == 201;
   }
 
   Future<List<Meeting>> getMeetings() async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Meeting?maxSize=50&orderBy=dateStart&order=desc');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -840,7 +1142,7 @@ class ApiService {
 
   Future<Meeting?> getMeetingById(String id) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Meeting/$id');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Meeting.fromJson(json.decode(response.body));
     }
@@ -851,7 +1153,7 @@ class ApiService {
     final url = Uri.parse('${ServerConfig().apiUrl}/Meeting/$id');
     final headers = await _getHeaders();
     final body = json.encode({'status': status});
-    final response = await http.put(url, headers: headers, body: body);
+    final response = await _HttpWithTimeout.put(url, headers: headers, body: body);
     return response.statusCode == 200;
   }
 
@@ -886,13 +1188,13 @@ class ApiService {
       if (selfUserId != null) 'assignedUserId': selfUserId,
     });
     
-    final response = await http.post(url, headers: headers, body: body);
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
     return response.statusCode == 200 || response.statusCode == 201;
   }
 
   Future<List<Map<String, dynamic>>> searchEntities(String entityType, String query) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/$entityType?maxSize=20&where[0][type]=contains&where[0][attribute]=name&where[0][value]=$query');
-    final response = await http.get(url, headers: await _getHeaders());
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['list'] != null) {
@@ -912,7 +1214,7 @@ class ApiService {
     // Note: EspoCRM 'between' date filters usually check if start is in range. 
     // For true overlap we'd need more logic, but this is a good first step.
     
-    final meetResp = await http.get(meetUrl, headers: headers);
+    final meetResp = await _HttpWithTimeout.get(meetUrl, headers: headers);
     if (meetResp.statusCode == 200) {
       final jsonMeet = json.decode(meetResp.body);
       if (jsonMeet['total'] != null && jsonMeet['total'] > 0) return true;
@@ -923,7 +1225,7 @@ class ApiService {
       '&where[0][type]=equals&where[0][attribute]=assignedUserId&where[0][value]=$userId'
       '&where[1][type]=between&where[1][attribute]=dateStart&where[1][value]=$start&where[1][value]=$end');
     
-    final slotResp = await http.get(slotUrl, headers: headers);
+    final slotResp = await _HttpWithTimeout.get(slotUrl, headers: headers);
     if (slotResp.statusCode == 200) {
       final jsonSlot = json.decode(slotResp.body);
       if (jsonSlot['total'] != null && jsonSlot['total'] > 0) return true;
@@ -932,65 +1234,92 @@ class ApiService {
     return false;
   }
 
-  Future<String> syncFcmToken() async {
-    final userId = await _storageService.getAssignedUserId();
-    final angId = await _storageService.getAngestellteId();
-    final fcmToken = await _storageService.read('fcm_token');
+  Future<String> syncFcmToken([String? directToken]) async {
+    final fcmToken = directToken ?? await _storageService.read('fcm_token');
     
     if (fcmToken == null || fcmToken.isEmpty) {
       return 'Fehler: Kein Token lokal gefunden (null/empty).';
     }
 
     String tokenPreview = fcmToken.length > 8 ? fcmToken.substring(0, 8) + "..." : fcmToken;
-
-    if (userId == null && angId == null) {
-      return 'Abgebrochen: Keine UserID/AngestellteID gefunden.';
-    }
-
-    String result = "Token ($tokenPreview) ";
     final headers = await _getHeaders();
     final payload = json.encode({
-      'cFcmToken': fcmToken,
       'fcmToken': fcmToken,
+      'cFcmToken': fcmToken,
+      'token': fcmToken,
     });
 
-    // 1. Update User
+    String result = "Token ($tokenPreview) ";
+
+    // 1. Primärer, sicherer Sync via dedizierte Controller-Action
+    try {
+      final actionUrl = Uri.parse('${ServerConfig().apiUrl}/User/action/syncFcmToken');
+      debugPrint('Syncing FCM Token via action to $actionUrl');
+      final actResp = await _HttpWithTimeout.post(actionUrl, headers: headers, body: payload);
+      if (actResp.statusCode == 200) {
+        final data = json.decode(actResp.body);
+        if (data['success'] == true) {
+          result += "Action: OK. ";
+          return result;
+        }
+      }
+    } catch (e) {
+      debugPrint('Action syncFcmToken failed: $e');
+    }
+
+    // 2. Fallback: Direkter User-Patch
+    final userId = await _storageService.getAssignedUserId();
     if (userId != null) {
       try {
         final url = Uri.parse('${ServerConfig().apiUrl}/User/$userId');
-        debugPrint('Syncing User FCM Token to $url');
-        final response = await http.patch(url, headers: headers, body: payload);
-
+        final response = await _HttpWithTimeout.patch(url, headers: headers, body: payload);
         if (response.statusCode == 200) {
           result += "User: OK. ";
-        } else if (response.statusCode == 405) {
-          final putResp = await http.put(url, headers: headers, body: payload);
-          result += "User: ${putResp.statusCode == 200 ? 'OK (PUT)' : 'Fehler ${putResp.statusCode}'}. ";
-        } else {
-          result += "User: Fehler ${response.statusCode}. ";
-          debugPrint('FCM Sync User failed: ${response.body}');
-        }
-      } catch (e) {
-        result += "User: Exception. ";
-      }
-    }
-
-    // 2. Update Angestellte (Employee) - redundant safe bet
-    if (angId != null) {
-      try {
-        final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$angId');
-        debugPrint('Syncing Angestellte FCM Token to $url');
-        final response = await http.patch(url, headers: headers, body: payload);
-        if (response.statusCode == 200) {
-          result += "Angestellte: OK. ";
-        } else {
-          // Failure here is often expected if field doesn't exist, so we don't treat it as critical
-          debugPrint('FCM Sync Angestellte failed: ${response.statusCode}');
         }
       } catch (_) {}
     }
 
-    return result.isEmpty ? "Kein Sync durchgeführt." : result;
+    // 3. Fallback: Angestellte-Patch
+    final angId = await _storageService.getAngestellteId();
+    if (angId != null) {
+      try {
+        final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/$angId');
+        await _HttpWithTimeout.patch(url, headers: headers, body: payload);
+      } catch (_) {}
+    }
+
+    return result;
+  }
+
+  Future<bool> sendTestPush() async {
+    final headers = await _getHeaders();
+
+    // 1. Wenn im Browser (Chrome/Web): WebPush-Endpoint aufrufen
+    if (kIsWeb) {
+      try {
+        final webUrl = Uri.parse('${ServerConfig().apiUrl}/PushSubscription/action/testPush');
+        final resp = await _HttpWithTimeout.post(webUrl, headers: headers);
+        if (resp.statusCode == 200) {
+          final data = json.decode(resp.body);
+          if (data['success'] == true) return true;
+        }
+      } catch (e) {
+        debugPrint('Web sendTestPush error: $e');
+      }
+    }
+
+    // 2. Nativer Android/FCM Push-Endpoint
+    final url = Uri.parse('${ServerConfig().apiUrl}/User/action/testPush');
+    try {
+      final resp = await _HttpWithTimeout.post(url, headers: headers);
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        return data['success'] == true;
+      }
+    } catch (e) {
+      debugPrint('sendTestPush error: $e');
+    }
+    return false;
   }
 
   // --- Email Endpoints --- //
@@ -1002,7 +1331,7 @@ class ApiService {
     // Custom folders
     final url = Uri.parse('${ServerConfig().apiUrl}/EmailFolder');
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return List<Map<String, dynamic>>.from(data['list']);
@@ -1018,7 +1347,7 @@ class ApiService {
     // Group inboxes
     final url = Uri.parse('${ServerConfig().apiUrl}/InboundEmail');
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return List<Map<String, dynamic>>.from(data['list']);
@@ -1033,7 +1362,7 @@ class ApiService {
     
     final url = Uri.parse('${ServerConfig().apiUrl}/GroupEmailFolder');
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return List<Map<String, dynamic>>.from(data['list']);
@@ -1049,7 +1378,7 @@ class ApiService {
     // Email Accounts (Personal/Shared IMAP Accounts)
     final url = Uri.parse('${ServerConfig().apiUrl}/EmailAccount');
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return List<Map<String, dynamic>>.from(data['list']);
@@ -1075,7 +1404,7 @@ class ApiService {
     }
 
     try {
-      final response = await http.get(Uri.parse(url), headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(Uri.parse(url), headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final list = data['list'] as List;
@@ -1090,7 +1419,7 @@ class ApiService {
     if (token == null) return null;
     final url = Uri.parse('${ServerConfig().apiUrl}/Email/$id');
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         return Email.fromJson(json.decode(response.body));
       }
@@ -1106,7 +1435,7 @@ class ApiService {
     final url = Uri.parse('${ServerConfig().apiUrl}/EmailTemplate?maxSize=100&orderBy=name&order=asc');
     
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final list = data['list'] as List;
@@ -1125,7 +1454,7 @@ class ApiService {
     final url = Uri.parse('${ServerConfig().apiUrl}/Email/action/getComposerData');
     
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data.containsKey('fromEmailAddresses') && data['fromEmailAddresses'] is List) {
@@ -1153,7 +1482,7 @@ class ApiService {
     final url = Uri.parse('${ServerConfig().apiUrl}/Email');
     
     try {
-      final response = await http.post(
+      final response = await _HttpWithTimeout.post(
         url,
         headers: {
           'Authorization': token, 
@@ -1178,7 +1507,7 @@ class ApiService {
     
     final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getMyRooms');
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data is List) {
@@ -1196,7 +1525,7 @@ class ApiService {
     if (token == null) return {};
     final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getChatUsersFiltered');
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         return json.decode(response.body);
       }
@@ -1209,7 +1538,7 @@ class ApiService {
     if (token == null) return null;
     final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/createDirectChat');
     try {
-      final response = await http.post(
+      final response = await _HttpWithTimeout.post(
         url, 
         headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
         body: json.encode({'userId': userId})
@@ -1222,13 +1551,14 @@ class ApiService {
     return null;
   }
 
-  Future<List<ChatMessage>> getChatMessages(String roomId, {int offset = 0}) async {
+  Future<List<ChatMessage>> getChatMessages(String roomId, {int offset = 0, String? after}) async {
     final token = await _storageService.getToken();
     if (token == null) return [];
     
-    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getMessages?chatRoomId=$roomId&offset=$offset');
+    final afterQuery = after != null ? '&after=${Uri.encodeComponent(after)}' : '';
+    final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/getMessages?chatRoomId=$roomId&offset=$offset$afterQuery');
     try {
-      final response = await http.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token, 'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data is List) {
@@ -1252,7 +1582,7 @@ class ApiService {
         bodyMap['attachmentId'] = attachmentId;
       }
       
-      final response = await http.post(
+      final response = await _HttpWithTimeout.post(
         url, 
         headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
         body: json.encode(bodyMap)
@@ -1273,7 +1603,7 @@ class ApiService {
     
     final url = Uri.parse('${ServerConfig().apiUrl}/ChatMessage/action/markRead');
     try {
-      await http.post(
+      await _HttpWithTimeout.post(
         url, 
         headers: {'Authorization': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
         body: json.encode({'chatRoomId': roomId})
@@ -1281,4 +1611,297 @@ class ApiService {
     } catch (_) {}
   }
 
+
+  // ── Admin Login (Switch User) ─────────────────────────────────────────────
+  Future<bool> adminLogin(String adminUser, String adminPass, String targetUser) async {
+    final ok = await login(adminUser, adminPass);
+    if (!ok) return false;
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/User?where[0][type]=equals&where[0][attribute]=userName&where[0][value]=${Uri.encodeComponent(targetUser)}');
+      final resp = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        if (data['list'] != null && (data['list'] as List).isNotEmpty) {
+          final user = (data['list'] as List).first;
+          final targetUserId = user['id'] as String;
+          await _storageService.saveUserId(targetUserId);
+          if (user['name'] != null) {
+            await _storageService.saveAngestellteName(user['name']);
+          }
+          final angUrl = Uri.parse('${ServerConfig().apiUrl}/Angestellte?where[0][type]=equals&where[0][attribute]=assignedUserId&where[0][value]=$targetUserId');
+          final angResp = await _HttpWithTimeout.get(angUrl, headers: await _getHeaders());
+          if (angResp.statusCode == 200) {
+            final angData = json.decode(angResp.body);
+            if (angData['list'] != null && (angData['list'] as List).isNotEmpty) {
+              final ang = (angData['list'] as List).first;
+              await _storageService.saveAngestellteId(ang['id']);
+              if (ang['name'] != null) {
+                await _storageService.saveAngestellteName(ang['name']);
+              }
+            }
+          }
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  // ── Arbeitszeitkonten ──────────────────────────────────────────────────────
+  Future<List<Arbeitszeitkonto>> getArbeitszeitkonten({String? angestellteId, int limit = 500}) async {
+    final where = <Map<String, dynamic>>[];
+    if (angestellteId != null) {
+      where.add({'type': 'equals', 'attribute': 'angestellteId', 'value': angestellteId});
+    }
+    final url = Uri.parse('${ServerConfig().apiUrl}/Arbeitszeitkonto?maxSize=$limit&orderBy=jahr&order=desc${where.isNotEmpty ? '&where=${Uri.encodeComponent(json.encode(where))}' : ''}');
+    try {
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Arbeitszeitkonto.fromJson(e)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('getArbeitszeitkonten error: $e');
+    }
+    return [];
+  }
+
+  // ── Change Password ────────────────────────────────────────────────────────
+  Future<bool> changePassword(String currentPassword, String newPassword) async {
+    final self = await getSelfUser();
+    final userId = self?['user']?['id'];
+    if (userId == null) return false;
+    final url = Uri.parse('${ServerConfig().apiUrl}/User/$userId/password');
+    try {
+      final response = await _HttpWithTimeout.put(
+        url,
+        headers: await _getHeaders(),
+        body: json.encode({
+          'currentPassword': currentPassword,
+          'password': newPassword,
+          'confirmPassword': newPassword,
+        }),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ── Active Banner ──────────────────────────────────────────────────────────
+  Future<Map<String, dynamic>?> getActiveBanner() async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/CAppBanner?where[0][type]=isTrue&where[0][attribute]=aktiv&maxSize=1');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null && (data['list'] as List).isNotEmpty) {
+          return (data['list'] as List).first as Map<String, dynamic>;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // ── System Checkin Config ──────────────────────────────────────────────────
+  Future<bool> getCheckinConfig() async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Slots/action/getCheckinConfig');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['checkinCheckoutEnabled'] == true;
+      }
+    } catch (_) {}
+    return true;
+  }
+
+  // ── Stored Employee Name ───────────────────────────────────────────────────
+  Future<String?> getStoredAngestellteName() async {
+    return await _storageService.getAngestellteName();
+  }
+
+  // ── Create Wachbuch ────────────────────────────────────────────────────────
+  Future<String?> createWachbuch(String name, String? objId) async {
+    try {
+      final body = <String, dynamic>{
+        'name': name,
+        'status': 'Active',
+        if (objId != null) ...{
+          'serviceObjectId': objId,
+          'objekteId': objId,
+        },
+      };
+      final url = Uri.parse('${ServerConfig().apiUrl}/CWachbuch');
+      final response = await _HttpWithTimeout.post(
+        url,
+        headers: await _getHeaders(),
+        body: json.encode(body),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['id'] as String?;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // ── Active Shift Info ──────────────────────────────────────────────────────
+  Future<Map<String, dynamic>?> getAktiveSchichtInfo() async {
+    try {
+      final now = DateTime.now();
+      final slots = await getSlots(
+        startDate: now.subtract(const Duration(days: 1)),
+        endDate: now.add(const Duration(days: 1)),
+      );
+      Slot? activeSlot;
+      for (final s in slots) {
+        if (s.checkin != null && s.checkout == null) {
+          activeSlot = s;
+          break;
+        }
+      }
+      if (activeSlot == null) {
+        for (final s in slots) {
+          if (s.dateStart != null && s.dateEnd != null) {
+            try {
+              final start = DateTime.parse(s.dateStart!);
+              final end = DateTime.parse(s.dateEnd!);
+              if (now.isAfter(start) && now.isBefore(end)) {
+                activeSlot = s;
+                break;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+      if (activeSlot == null && slots.isNotEmpty) {
+        activeSlot = slots.first;
+      }
+      if (activeSlot == null) return null;
+
+      Wachbuch? matchingWb;
+      final books = await getWachbuchs();
+      for (final wb in books) {
+        // 1. Exact foreign key match by serviceObjectId
+        if (activeSlot.objekteId != null &&
+            wb.serviceObjectId != null &&
+            activeSlot.objekteId == wb.serviceObjectId) {
+          matchingWb = wb;
+          break;
+        }
+        // 2. Exact name match
+        final activeName = (activeSlot.objekteName ?? activeSlot.name).trim().toLowerCase();
+        final wbName = wb.name.trim().toLowerCase();
+        if (activeName.isNotEmpty && wbName == activeName) {
+          matchingWb = wb;
+          break;
+        }
+        // 3. Substring match
+        if (activeName.isNotEmpty && (wbName.contains(activeName) || activeName.contains(wbName))) {
+          matchingWb = wb;
+          break;
+        }
+      }
+
+      return {
+        'slot': activeSlot,
+        'wachbuch': matchingWb,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Dienstanweisungen ──────────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getDienstanweisungen() async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Dienstanweisung?maxSize=100&orderBy=createdAt&order=desc');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          return List<Map<String, dynamic>>.from(data['list']);
+        }
+      }
+    } catch (e) {
+      debugPrint('getDienstanweisungen error: $e');
+    }
+    return [];
+  }
+
+  // ── Delta-Sync: Slots ───────────────────────────────────────────────────────
+  Future<List<Slot>> getSlotsDelta({required DateTime since}) async {
+    try {
+      final sinceUtc = since.toUtc();
+      final sinceStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(sinceUtc);
+      final baseUri = Uri.parse(ServerConfig().apiUrl);
+      final url = Uri(
+        scheme: baseUri.scheme,
+        host: baseUri.host,
+        port: baseUri.hasPort ? baseUri.port : null,
+        path: '${baseUri.path}/Slots',
+        queryParameters: {
+          'maxSize': '500',
+          'where[0][type]': 'greaterThanOrEquals',
+          'where[0][attribute]': 'modifiedAt',
+          'where[0][value]': sinceStr,
+          'orderBy': 'modifiedAt',
+          'order': 'asc',
+        },
+      );
+
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('getSlotsDelta error: $e');
+    }
+    return [];
+  }
+
+  // ── Upcoming Birthdays ─────────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getUpcomingBirthdays() async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte?select=id,name,firstName,lastName,geburtsdatum&maxSize=500&where[0][type]=isNotNull&where[0][attribute]=geburtsdatum');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          final List<Map<String, dynamic>> upcoming = [];
+          for (final item in data['list']) {
+            final bdateStr = item['geburtsdatum'] as String?;
+            if (bdateStr == null || bdateStr.length < 10) continue;
+            try {
+              final bDate = DateTime.parse(bdateStr);
+              var nextBday = DateTime(now.year, bDate.month, bDate.day);
+              if (nextBday.isBefore(today)) {
+                nextBday = DateTime(now.year + 1, bDate.month, bDate.day);
+              }
+              final diffDays = nextBday.difference(today).inDays;
+              if (diffDays >= 0 && diffDays <= 7) {
+                final copy = Map<String, dynamic>.from(item);
+                copy['daysUntil'] = diffDays;
+                copy['age'] = nextBday.year - bDate.year;
+                upcoming.add(copy);
+              }
+            } catch (_) {}
+          }
+          upcoming.sort((a, b) => (a['daysUntil'] as int).compareTo(b['daysUntil'] as int));
+          return upcoming;
+        }
+      }
+    } catch (e) {
+      debugPrint('getUpcomingBirthdays error: $e');
+    }
+    return [];
+  }
 }

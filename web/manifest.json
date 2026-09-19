@@ -1,11 +1,11 @@
 {
-    "name": "espo_worker_app",
-    "short_name": "espo_worker_app",
+    "name": "MB Security Worker",
+    "short_name": "MB Worker",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0d131f",
+    "theme_color": "#0d131f",
+    "description": "MB Security Worker App",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <!--
     If you are serving your web app in a path other than the root, change the
     href value below to reflect the base path you are serving from.
@@ -16,31 +18,120 @@
   -->
   <base href="$FLUTTER_BASE_HREF">
 
-  <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="MB Security Worker App">
+
+  <meta name="theme-color" content="#0d131f">
 
   <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="espo_worker_app">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MB Worker">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=3">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/png" href="favicon.png?v=3"/>
 
-  <title>espo_worker_app</title>
+  <title>MB Security Worker</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      background-color: #0b0f17;
+      background-image: url('bg_pattern.png');
+      background-repeat: repeat;
+      background-size: 360px auto;
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #pwa-splash {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background-color: #0b0f17;
+      background-image: url('bg_pattern.png');
+      background-repeat: repeat;
+      background-size: 360px auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      color: #ffffff;
+      transition: opacity 0.35s ease-out;
+    }
+    .splash-logo {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      margin-bottom: 20px;
+    }
+    .splash-title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      color: #f8fafc;
+      margin-bottom: 6px;
+    }
+    .splash-subtitle {
+      font-size: 13px;
+      font-weight: 400;
+      color: #94a3b8;
+      letter-spacing: 0.5px;
+      margin-bottom: 32px;
+    }
+    .splash-spinner {
+      width: 30px;
+      height: 30px;
+      border: 3px solid rgba(255, 255, 255, 0.12);
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+  <script src="push_bridge.js"></script>
+  <script src="webauthn_bridge.js"></script>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+  <div id="pwa-splash">
+    <img class="splash-logo" src="icons/Icon-192.png?v=3" alt="MB Worker" />
+    <div class="splash-title">MB SECURITY</div>
+    <div class="splash-subtitle">Mitarbeiter-Portal</div>
+    <div class="splash-spinner"></div>
+  </div>
+  <script>
+    // Fade out and remove splash when Flutter renders first frame
+    window.addEventListener('flutter-first-frame', function() {
+      var splash = document.getElementById('pwa-splash');
+      if (splash) {
+        splash.style.opacity = '0';
+        setTimeout(function() {
+          if (splash.parentNode) splash.parentNode.removeChild(splash);
+        }, 350);
+      }
+    });
+    // Fallback safety timeout if first-frame event is delayed
+    setTimeout(function() {
+      var splash = document.getElementById('pwa-splash');
+      if (splash && splash.style.opacity !== '0') {
+        splash.style.opacity = '0';
+        setTimeout(function() {
+          if (splash.parentNode) splash.parentNode.removeChild(splash);
+        }, 350);
+      }
+    }, 6000);
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
