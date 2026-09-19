@@ -46,8 +46,6 @@ import '../models/bereitschaft.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import '../services/web_biometric_service.dart';
 
 class ScheduledEvent {
   final String title;
@@ -176,9 +174,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
     // FCM Token Sync beim Start
     _syncFcmTokenOnStart();
-    
-    // Check for web updates
-    _startUpdateChecker();
 
     // Setup push click & URL hash deep linking to slots
     _setupDeepLink();
@@ -744,7 +739,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     );
   }
 
-  Timer? _updateTimer;
   Timer? _pollTimer;
 
   void _setupDeepLink() {
@@ -781,46 +775,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     });
   }
 
-  void _startUpdateChecker() {
-    // Check for updates every 2 minutes
-    _updateTimer = Timer.periodic(const Duration(minutes: 2), (_) async {
-      if (!kIsWeb) return; // Only needed for Web cache busting
-      try {
-        final response = await http.get(Uri.parse('https://app.mb-scc.net/version.json?t=${DateTime.now().millisecondsSinceEpoch}'));
-        if (response.statusCode == 200) {
-          final data = json.decode(response.body);
-          final latestBuild = data['buildNumber'] as int?;
-          if (latestBuild != null && latestBuild > AppConstants.appBuildNumber) {
-            _updateTimer?.cancel();
-            if (mounted) {
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (context) => AlertDialog(
-                  title: const Text('App Update verfügbar!'),
-                  content: const Text('Es wurden neue Anpassungen an der App vorgenommen. Bitte lade die App neu, damit die Änderungen sofort wirksam werden und du keine alten Daten siehst.'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Später'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () {
-                        WebBiometricService().reloadWeb();
-                      },
-                      style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white),
-                      child: const Text('Jetzt neu laden'),
-                    ),
-                  ],
-                ),
-              );
-            }
-          }
-        }
-      } catch (_) {}
-    });
-  }
-
   void _onSyncQueueChanged() {
     if (mounted) {
       setState(() {
@@ -834,7 +788,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     WidgetsBinding.instance.removeObserver(this);
     _syncQueue.removeListener(_onSyncQueueChanged);
     _pollTimer?.cancel();
-    _updateTimer?.cancel();
     _syncQueue.stopPeriodicSync();
     _calendarController.dispose();
     super.dispose();

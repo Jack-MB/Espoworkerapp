@@ -7,9 +7,6 @@ import '../services/secure_storage_service.dart';
 import '../services/web_biometric_service.dart';
 import '../core/constants.dart';
 import '../core/server_config.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/acl_service.dart';
 import 'dashboard_screen.dart';
@@ -56,56 +53,7 @@ class _LoginScreenState extends State<LoginScreen> {
     _checkSavedCredentials();
     _checkServerUrl();
     if (kIsWeb) _checkWebBiometricAvailability();
-    
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-        _checkForNativeUpdate();
-      }
-    });
   }
-
-  Future<void> _checkForNativeUpdate() async {
-    if (kIsWeb) return; // In der Webversion niemals einen Download oder Update-Popup anbieten
-    try {
-      final response = await http.get(Uri.parse('https://app.mb-scc.net/download/version.json'));
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final latestBuild = data['buildNumber'] as int?;
-        if (latestBuild != null && latestBuild > AppConstants.appBuildNumber) {
-          _showUpdatePopup(data['version'], data['url']);
-        }
-      }
-    } catch (_) {
-      // Silently fail if offline or unavailable
-    }
-  }
-
-  void _showUpdatePopup(String? latestVersion, String? downloadUrl) {
-    if (kIsWeb) return; // Kein Download-Link im Web
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Update verfügbar!'),
-        content: Text('Eine neue Version der MB-SCC App ($latestVersion) ist verfügbar. Bitte aktualisieren Sie die App, um die neuesten Funktionen zu nutzen.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Später'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (downloadUrl != null) {
-                launchUrl(Uri.parse(downloadUrl), mode: LaunchMode.externalApplication);
-              }
-            },
-            child: const Text('Jetzt herunterladen'),
-          ),
-        ],
-      ),
-    );
-  }
-
 
   Future<void> _checkServerUrl() async {
     setState(() {
