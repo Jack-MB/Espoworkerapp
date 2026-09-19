@@ -33,6 +33,7 @@ import 'meeting_list_screen.dart';
 import 'email_list_screen.dart';
 import 'chat_list_screen.dart';
 import 'arbeitszeitkonto_screen.dart';
+import '../utils/espo_date.dart';
 import 'change_password_screen.dart';
 
 import '../models/slot.dart';
@@ -974,6 +975,20 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty) {
             subtitle += (subtitle.isNotEmpty ? ' | ' : '') + 'Partner: ${slot.kooperationspartnerName}';
           }
+          if (slot.checkin != null && slot.checkin!.isNotEmpty) {
+            _checkedSlotIds.add(slot.id);
+            final localIn = formatUtcToLocalTime(slot.checkin);
+            if (localIn != null) {
+              _checkedSlotTimes[slot.id] = localIn;
+            }
+          }
+          if (slot.checkout != null && slot.checkout!.isNotEmpty) {
+            _checkedSlotOutIds.add(slot.id);
+            final localOut = formatUtcToLocalTime(slot.checkout);
+            if (localOut != null) {
+              _checkedSlotOutTimes[slot.id] = localOut;
+            }
+          }
           events.add(ScheduledEvent(
             slot.name.isNotEmpty ? slot.name : 'Schicht',
             subtitle: subtitle,
@@ -1451,18 +1466,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   Future<void> _calendarSyncToServer(Slot slot, {String? checkInTime, String? checkOutTime}) async {
     final Map<String, dynamic> data = {};
-    String? datePart;
-    if (slot.dateStart != null && slot.dateStart!.contains(' ')) {
-      datePart = slot.dateStart!.split(' ')[0];
-    } else if (slot.dateStart != null) {
-      datePart = slot.dateStart;
-    }
 
     if (checkInTime != null) {
-      data['checkin'] = datePart != null ? '$datePart $checkInTime:00' : null;
+      data['checkin'] = formatLocalToUtcDateTime(
+        localHHmm: checkInTime,
+        baseDateUtc: slot.dateStart,
+      );
       if (slot.dateStart != null) {
         try {
-          final startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parse(slot.dateStart!);
+          final startDt = espoUtcToLocal(slot.dateStart!);
           final parts = checkInTime.split(':');
           final checkDt = DateTime(startDt.year, startDt.month, startDt.day, int.parse(parts[0]), int.parse(parts[1]));
           
@@ -1479,7 +1491,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       }
     }
     if (checkOutTime != null) {
-      data['checkout'] = datePart != null ? '$datePart $checkOutTime:00' : null;
+      data['checkout'] = formatLocalToUtcDateTime(
+        localHHmm: checkOutTime,
+        baseDateUtc: slot.dateEnd ?? slot.dateStart,
+      );
     }
 
     if (data.isNotEmpty) {

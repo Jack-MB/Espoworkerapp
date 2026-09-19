@@ -10,6 +10,7 @@ import '../services/secure_storage_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_queue_service.dart';
 import '../core/constants.dart';
+import '../utils/espo_date.dart';
 
 /// Self-Service Check-In Screen für Mitarbeiter & Einsatzleiter — inspiriert vom stationären Check-in-Terminal.
 /// Da der Mitarbeiter in der App bereits authentifiziert ist, wird KEIN Barcode-Scanner benötigt.
@@ -152,12 +153,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
         }
 
         if (s.dateStart == null) return false;
-        final startPart = s.dateStart!.split(' ')[0];
-        final endPart = s.dateEnd?.split(' ')[0] ?? startPart;
-
-        // Schicht startet heute ODER lief über Mitternacht und endet heute
-        return startPart == todayStr ||
-            (startPart.compareTo(todayStr) <= 0 && endPart.compareTo(todayStr) >= 0);
+        // Schicht findet heute statt (inkl. Nachtschichten über Mitternacht)
+        return isSlotOnLocalDate(s.dateStart, s.dateEnd, now);
       }).toList();
 
       relevantSlots.sort((a, b) => (a.dateStart ?? '').compareTo(b.dateStart ?? ''));
@@ -166,18 +163,16 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
       for (final s in relevantSlots) {
         if (s.checkin != null && s.checkin!.isNotEmpty) {
           _checkedIn.add(s.id);
-          if (!_checkedTimes.containsKey(s.id)) {
-            _checkedTimes[s.id] = s.checkin!.contains(' ')
-                ? s.checkin!.split(' ')[1].substring(0, 5)
-                : s.checkin!.substring(0, 5);
+          final localIn = formatUtcToLocalTime(s.checkin);
+          if (localIn != null) {
+            _checkedTimes[s.id] = localIn;
           }
         }
         if (s.checkout != null && s.checkout!.isNotEmpty) {
           _checkedOut.add(s.id);
-          if (!_checkedOutTimes.containsKey(s.id)) {
-            _checkedOutTimes[s.id] = s.checkout!.contains(' ')
-                ? s.checkout!.split(' ')[1].substring(0, 5)
-                : s.checkout!.substring(0, 5);
+          final localOut = formatUtcToLocalTime(s.checkout);
+          if (localOut != null) {
+            _checkedOutTimes[s.id] = localOut;
           }
         }
       }
@@ -457,7 +452,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                 ),
               ),
             ],
-            if (_acl.isAdmin) ...[
+            if (_acl.isAdmin || _hasSupervisorCapabilities) ...[
               const SizedBox(height: 14),
               Container(
                 padding: const EdgeInsets.all(8),
@@ -466,14 +461,16 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.amber.shade700.withOpacity(0.4)),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.admin_panel_settings, size: 16, color: Colors.amber),
-                    SizedBox(width: 6),
+                    const Icon(Icons.admin_panel_settings, size: 16, color: Colors.amber),
+                    const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        'Admin-Hinweis: Du kannst die Schicht bei Notfällen auch ohne GPS-Validierung freigeben.',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                        _acl.isAdmin
+                            ? 'Admin-Hinweis: Du kannst die Schicht bei Notfällen oder schlechtem GPS vor Ort freigeben.'
+                            : 'Einsatzleiter-Hinweis: Du kannst dein Team bei Notfällen oder schlechtem GPS vor Ort freigeben.',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ],
@@ -496,7 +493,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                 );
               },
             ),
-          if (_acl.isAdmin)
+          if (_acl.isAdmin || _hasSupervisorCapabilities)
             ElevatedButton.icon(
               onPressed: () {
                 Navigator.pop(ctx);
@@ -511,7 +508,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                 foregroundColor: Colors.white,
               ),
               icon: const Icon(Icons.check, size: 16),
-              label: const Text('Admin-Freigabe'),
+              label: Text(_acl.isAdmin ? 'Admin-Freigabe' : 'EL-Freigabe'),
             ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx),
@@ -796,10 +793,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
     final isIn = _checkedIn.contains(slot.id) || (slot.checkin != null && slot.checkin!.isNotEmpty);
     final isOut = _checkedOut.contains(slot.id) || (slot.checkout != null && slot.checkout!.isNotEmpty);
 
-    final inTime = _checkedTimes[slot.id] ??
-        (slot.checkin != null ? (slot.checkin!.contains(' ') ? slot.checkin!.split(' ')[1].substring(0, 5) : slot.checkin!.substring(0, 5)) : '');
-    final outTime = _checkedOutTimes[slot.id] ??
-        (slot.checkout != null ? (slot.checkout!.contains(' ') ? slot.checkout!.split(' ')[1].substring(0, 5) : slot.checkout!.substring(0, 5)) : '');
+    final inTime = _checkedTimes[slot.id] ?? formatUtcToLocalTime(slot.checkin) ?? '';
+    final outTime = _checkedOutTimes[slot.id] ?? formatUtcToLocalTime(slot.checkout) ?? '';
 
     final ampel = _slotAmpeln[slot.id] ?? '🟢';
 

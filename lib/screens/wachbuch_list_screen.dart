@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io' show File;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../services/api_service.dart';
+import '../services/sync_queue_service.dart';
 import '../models/wachbuch.dart';
 import '../models/slot.dart';
 import 'wachbuch_detail_screen.dart';
@@ -188,151 +193,395 @@ class _WachbuchListScreenState extends State<WachbuchListScreen> {
     final zeit   = (start.isNotEmpty && end.isNotEmpty) ? '$start – $end Uhr' : start;
     final datum  = _formatDate(slot.dateStart);
 
-    // Mitarbeitername aus gespeichertem Storage laden
     String mitarbeiter = '';
     _apiService.getStoredAngestellteName().then((n) {
       mitarbeiter = n ?? '';
     });
 
+    final List<XFile> pendingFiles = [];
+    final ImagePicker picker = ImagePicker();
+    bool isSaving = false;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        titlePadding: EdgeInsets.zero,
-        title: Container(
-          padding: const EdgeInsets.fromLTRB(20, 16, 16, 14),
-          decoration: const BoxDecoration(
-            color: Color(0xFF1a3c5e),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: Row(children: [
-            const Icon(Icons.menu_book, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '📓  $wbName',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          Future<void> pickImage(ImageSource source) async {
+            try {
+              final file = await picker.pickImage(
+                source: source,
+                maxWidth: 1920,
+                maxHeight: 1920,
+                imageQuality: 80,
+              );
+              if (file != null) {
+                setDialogState(() {
+                  pendingFiles.add(file);
+                });
+              }
+            } catch (e) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Fehler beim Öffnen: $e')),
+                );
+              }
+            }
+          }
+
+          Future<void> pickFiles() async {
+            try {
+              final result = await FilePicker.platform.pickFiles(
+                allowMultiple: true,
+                type: FileType.custom,
+                allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'txt'],
+              );
+              if (result != null && result.files.isNotEmpty) {
+                setDialogState(() {
+                  for (final f in result.files) {
+                    if (f.path != null) {
+                      pendingFiles.add(XFile(f.path!, name: f.name));
+                    }
+                  }
+                });
+              }
+            } catch (e) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Fehler beim Auswählen der Datei: $e')),
+                );
+              }
+            }
+          }
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            titlePadding: EdgeInsets.zero,
+            title: Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 16, 14),
+              decoration: const BoxDecoration(
+                color: Color(0xFF1a3c5e),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
               ),
-            ),
-            InkWell(
-              onTap: () => Navigator.pop(ctx),
-              child: const Icon(Icons.close, color: Colors.white70, size: 22),
-            ),
-          ]),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Info-Block
-              Container(
-                padding: const EdgeInsets.all(10),
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF0F4F8),
-                  borderRadius: BorderRadius.circular(8),
+              child: Row(children: [
+                const Icon(Icons.menu_book, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '📓  $wbName',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (datum.isNotEmpty)
-                      _infoRow('📅', datum),
-                    if (objekt.isNotEmpty)
-                      _infoRow('📋', objekt),
-                    if (pos.isNotEmpty)
-                      _infoRow('👷', pos),
-                    if (zeit.isNotEmpty)
-                      _infoRow('🕐', zeit),
+                InkWell(
+                  onTap: isSaving ? null : () => Navigator.pop(ctx),
+                  child: const Icon(Icons.close, color: Colors.white70, size: 22),
+                ),
+              ]),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Info-Block
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F4F8),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (datum.isNotEmpty)  _infoRow('📅', datum),
+                        if (objekt.isNotEmpty) _infoRow('📋', objekt),
+                        if (pos.isNotEmpty)    _infoRow('👷', pos),
+                        if (zeit.isNotEmpty)   _infoRow('🕐', zeit),
+                      ],
+                    ),
+                  ),
+                  // Texteingabe
+                  TextField(
+                    controller: controller,
+                    maxLines: 4,
+                    enabled: !isSaving,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: 'Was ist passiert? Vorkommnisse, Übergabe-Info…',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.all(12),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Anhänge: Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isSaving ? null : () => pickImage(ImageSource.camera),
+                          icon: const Icon(Icons.camera_alt, size: 16),
+                          label: const Text('Kamera', style: TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isSaving ? null : () => pickImage(ImageSource.gallery),
+                          icon: const Icon(Icons.photo_library, size: 16),
+                          label: const Text('Galerie', style: TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isSaving ? null : pickFiles,
+                          icon: const Icon(Icons.attach_file, size: 16),
+                          label: const Text('Datei', style: TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  // Anhänge: Vorschau
+                  if (pendingFiles.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 74,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: pendingFiles.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          final file = pendingFiles[index];
+                          final isImg = file.name.toLowerCase().endsWith('.jpg') ||
+                              file.name.toLowerCase().endsWith('.jpeg') ||
+                              file.name.toLowerCase().endsWith('.png') ||
+                              file.name.toLowerCase().endsWith('.webp');
+
+                          return Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              Container(
+                                width: 70,
+                                height: 70,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.grey.shade300),
+                                  color: Colors.grey.shade100,
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: isImg
+                                    ? (kIsWeb
+                                        ? Image.network(file.path, fit: BoxFit.cover)
+                                        : Image.file(File(file.path), fit: BoxFit.cover))
+                                    : Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(Icons.insert_drive_file, color: Colors.blueGrey, size: 24),
+                                          const SizedBox(height: 2),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                                            child: Text(
+                                              file.name,
+                                              style: const TextStyle(fontSize: 8),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                              ),
+                              if (!isSaving)
+                                Positioned(
+                                  top: -4,
+                                  right: -4,
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      setDialogState(() {
+                                        pendingFiles.removeAt(index);
+                                      });
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.red,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.close, size: 12, color: Colors.white),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
                   ],
-                ),
-              ),
-              // Texteingabe
-              TextField(
-                controller: controller,
-                maxLines: 5,
-                autofocus: true,
-                decoration: InputDecoration(
-                  hintText:
-                      'Was ist passiert? Besonderheiten, Übergabe-Info…',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
+
+                  const SizedBox(height: 10),
+                  // DIN-Hinweis
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3CD),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      '⚠️  Eintrag ist nach dem Speichern revisionssicher (DIN 77200 §7).',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF856404),
+                      ),
+                    ),
                   ),
-                  contentPadding: const EdgeInsets.all(12),
-                ),
+                ],
               ),
-              const SizedBox(height: 8),
-              // DIN-Hinweis
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3CD),
-                  borderRadius: BorderRadius.circular(6),
+            ),
+            actions: [
+              TextButton(
+                onPressed: isSaving ? null : () => Navigator.pop(ctx),
+                child: const Text('Abbrechen'),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1a3c5e),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
                 ),
-                child: const Text(
-                  '⚠️  Eintrag ist nach dem Speichern revisionssicher (DIN 77200 §7).',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF856404),
-                  ),
-                ),
+                icon: isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save, size: 18),
+                label: Text(isSaving ? 'Wird gespeichert…' : 'Speichern'),
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        final text = controller.text.trim();
+                        if (text.isEmpty && pendingFiles.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text('Bitte einen Text oder ein Bild/Datei anhängen.')),
+                          );
+                          return;
+                        }
+
+                        setDialogState(() => isSaving = true);
+
+                        // Kontext-Info voranstellen
+                        final lines = <String>[];
+                        if (datum.isNotEmpty)       lines.add('📅 Datum: $datum');
+                        if (objekt.isNotEmpty)      lines.add('📋 Auftrag: $objekt');
+                        if (pos.isNotEmpty)         lines.add('👷 Position: $pos');
+                        if (zeit.isNotEmpty)        lines.add('🕐 Zeit: $zeit');
+                        if (mitarbeiter.isNotEmpty) lines.add('👤 Mitarbeiter: $mitarbeiter');
+                        final fullText = lines.isNotEmpty
+                            ? (text.isNotEmpty ? '${lines.join('\n')}\n---\n$text' : lines.join('\n'))
+                            : text;
+
+                        try {
+                          final List<String> attachmentIds = [];
+                          for (final file in pendingFiles) {
+                            try {
+                              final bytes = await file.readAsBytes();
+                              final mimeType = _mimeFromExtension(file.name);
+                              final id = await _apiService.uploadAttachment(
+                                fileName: file.name,
+                                mimeType: mimeType,
+                                bytes: bytes,
+                              );
+                              if (id != null) attachmentIds.add(id);
+                            } catch (uploadErr) {
+                              debugPrint('Error uploading attachment ${file.name}: $uploadErr');
+                            }
+                          }
+
+                          final ok = await _apiService.createNoteWithAttachments(
+                            wbId,
+                            fullText,
+                            attachmentIds,
+                          );
+
+                          if (!mounted) return;
+                          Navigator.pop(ctx);
+
+                          if (ok) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text('✅  Eintrag mit Anhängen gespeichert'),
+                              backgroundColor: Colors.green,
+                            ));
+                            _apiService.triggerWachbuchUpdate(wbId);
+                            setState(() {
+                              _wachbuchFuture = _apiService.getWachbuchs();
+                            });
+                          } else {
+                            await SyncQueueService().enqueueWachbuchNote(
+                              wachbuchId: wbId,
+                              text: fullText,
+                              attachmentIds: attachmentIds,
+                              description: 'Wachbuch ($wbName): ${text.length > 25 ? text.substring(0, 25) + '...' : text}',
+                            );
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text('⏳  Offline: In Warteschlange gespeichert. Wird bei Verbindung übertragen.'),
+                              backgroundColor: Colors.orange,
+                            ));
+                          }
+                        } catch (e) {
+                          await SyncQueueService().enqueueWachbuchNote(
+                            wachbuchId: wbId,
+                            text: fullText,
+                            description: 'Wachbuch ($wbName): ${text.length > 25 ? text.substring(0, 25) + '...' : text}',
+                          );
+                          if (!mounted) return;
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('⏳  In Warteschlange gespeichert ($e)'),
+                            backgroundColor: Colors.orange,
+                          ));
+                        }
+                      },
               ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Abbrechen'),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1a3c5e),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
-            ),
-            icon: const Icon(Icons.save, size: 18),
-            label: const Text('Speichern'),
-            onPressed: () async {
-              final text = controller.text.trim();
-              if (text.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Bitte einen Eintrag eingeben.')),
-                );
-                return;
-              }
-              Navigator.pop(ctx);
-
-              // Kontext-Info voranstellen
-              final lines = <String>[];
-              if (datum.isNotEmpty)       lines.add('📅 Datum: $datum');
-              if (objekt.isNotEmpty)      lines.add('📋 Auftrag: $objekt');
-              if (pos.isNotEmpty)         lines.add('👷 Position: $pos');
-              if (zeit.isNotEmpty)        lines.add('🕐 Zeit: $zeit');
-              if (mitarbeiter.isNotEmpty) lines.add('👤 Mitarbeiter: $mitarbeiter');
-              final fullText =
-                  lines.isNotEmpty ? '${lines.join('\n')}\n---\n$text' : text;
-
-              final ok =
-                  await _apiService.createWachbuchNote(wbId, fullText);
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(ok
-                    ? '✅  Eintrag gespeichert'
-                    : '❌  Fehler beim Speichern'),
-                backgroundColor: ok ? Colors.green : Colors.red,
-              ));
-            },
-          ),
-        ],
+          );
+        },
       ),
     );
+  }
+
+  String _mimeFromExtension(String filename) {
+    final ext = filename.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'jpg':
+      case 'jpeg': return 'image/jpeg';
+      case 'png': return 'image/png';
+      case 'gif': return 'image/gif';
+      case 'webp': return 'image/webp';
+      case 'pdf': return 'application/pdf';
+      default: return 'application/octet-stream';
+    }
   }
 
   Future<void> _autoCreateAndOpenDialog(Slot slot) async {

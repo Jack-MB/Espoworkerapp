@@ -305,14 +305,16 @@ class _SlotsScreenState extends State<SlotsScreen> {
       for (var slot in slots) {
         if (slot.checkin != null && slot.checkin!.isNotEmpty) {
           _checkedSlotIds.add(slot.id);
-          if (slot.checkin!.contains(' ')) {
-            _checkedSlotTimes[slot.id] = slot.checkin!.split(' ')[1].substring(0, 5);
+          final localIn = formatUtcToLocalTime(slot.checkin);
+          if (localIn != null) {
+            _checkedSlotTimes[slot.id] = localIn;
           }
         }
         if (slot.checkout != null && slot.checkout!.isNotEmpty) {
           _checkedSlotOutIds.add(slot.id);
-          if (slot.checkout!.contains(' ')) {
-            _checkedSlotOutTimes[slot.id] = slot.checkout!.split(' ')[1].substring(0, 5);
+          final localOut = formatUtcToLocalTime(slot.checkout);
+          if (localOut != null) {
+            _checkedSlotOutTimes[slot.id] = localOut;
           }
         }
       }
@@ -336,14 +338,16 @@ class _SlotsScreenState extends State<SlotsScreen> {
         slotMap[s.id] = s;
         if (s.checkin != null && s.checkin!.isNotEmpty) {
           _checkedSlotIds.add(s.id);
-          if (s.checkin!.contains(' ')) {
-            _checkedSlotTimes[s.id] = s.checkin!.split(' ')[1].substring(0, 5);
+          final localIn = formatUtcToLocalTime(s.checkin);
+          if (localIn != null) {
+            _checkedSlotTimes[s.id] = localIn;
           }
         }
         if (s.checkout != null && s.checkout!.isNotEmpty) {
           _checkedSlotOutIds.add(s.id);
-          if (s.checkout!.contains(' ')) {
-            _checkedSlotOutTimes[s.id] = s.checkout!.split(' ')[1].substring(0, 5);
+          final localOut = formatUtcToLocalTime(s.checkout);
+          if (localOut != null) {
+            _checkedSlotOutTimes[s.id] = localOut;
           }
         }
       }
@@ -400,16 +404,18 @@ class _SlotsScreenState extends State<SlotsScreen> {
       if (!AclService().isAdmin && slot.dateStart != null) {
         try {
           final now = DateTime.now();
-          final datePart = slot.dateStart!.split(' ')[0];
-          final parts = datePart.split('-');
-          if (parts.length >= 3) {
-            final shiftYear = int.parse(parts[0]);
-            final shiftMonth = int.parse(parts[1]);
-            final shiftDay = int.parse(parts[2]);
-            if (now.year != shiftYear || now.month != shiftMonth || now.day != shiftDay) {
-              _showError('Check-In verweigert: Diese Schicht ist nicht für heute geplant.');
-              return;
-            }
+          final startLocal = espoUtcToLocal(slot.dateStart!);
+          final endLocal = (slot.dateEnd != null && slot.dateEnd!.trim().isNotEmpty)
+              ? espoUtcToLocal(slot.dateEnd!)
+              : startLocal.add(const Duration(hours: 8));
+
+          final isToday = isSlotOnLocalDate(slot.dateStart, slot.dateEnd, now);
+          final withinBuffer = now.isAfter(startLocal.subtract(const Duration(hours: 4))) &&
+              now.isBefore(endLocal.add(const Duration(hours: 4)));
+
+          if (!isToday && !withinBuffer) {
+            _showError('Check-In verweigert: Diese Schicht ist nicht für heute geplant.');
+            return;
           }
         } catch (e) {
           debugPrint('Date Validation Error: $e');
@@ -685,18 +691,16 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
   Future<void> _syncSlotToServer(Slot slot, {String? checkInTime, String? checkOutTime}) async {
     final Map<String, dynamic> data = {};
-    String? datePart;
-    if (slot.dateStart != null && slot.dateStart!.contains(' ')) {
-      datePart = slot.dateStart!.split(' ')[0];
-    } else if (slot.dateStart != null) {
-      datePart = slot.dateStart;
-    }
 
     if (checkInTime != null) {
-      data['checkin'] = checkInTime.isEmpty ? null : (datePart != null ? '$datePart $checkInTime:00' : null);
       if (checkInTime.isEmpty) {
+        data['checkin'] = null;
         data['checkinstat'] = null;
       } else {
+        data['checkin'] = formatLocalToUtcDateTime(
+          localHHmm: checkInTime,
+          baseDateUtc: slot.dateStart,
+        );
         // Pünktlichkeitsampel:
         // 🟢 = ≥30 Min vor Schichtbeginn eingecheckt
         // 🟡 = innerhalb der 30-Min-Pufferzone vor Schichtbeginn
@@ -704,7 +708,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
         String checkinStat = '🟢';
         if (slot.dateStart != null) {
           try {
-            final startDt = DateFormat('yyyy-MM-dd HH:mm:ss').parseUtc(slot.dateStart!).toLocal();
+            final startDt = espoUtcToLocal(slot.dateStart!);
             final parts = checkInTime.split(':');
             final checkDt = DateTime(startDt.year, startDt.month, startDt.day, int.parse(parts[0]), int.parse(parts[1]));
             final diffMinutes = checkDt.difference(startDt).inMinutes; // positive = zu spät
@@ -721,7 +725,12 @@ class _SlotsScreenState extends State<SlotsScreen> {
       }
     }
     if (checkOutTime != null) {
-      data['checkout'] = checkOutTime.isEmpty ? null : (datePart != null ? '$datePart $checkOutTime:00' : null);
+      data['checkout'] = checkOutTime.isEmpty
+          ? null
+          : formatLocalToUtcDateTime(
+              localHHmm: checkOutTime,
+              baseDateUtc: slot.dateEnd ?? slot.dateStart,
+            );
     }
 
     if (data.isNotEmpty) {
@@ -1716,21 +1725,24 @@ class _SlotsScreenState extends State<SlotsScreen> {
         final slot = _allSlots.firstWhere((s) => s.id == id);
         final Map<String, dynamic> data = {};
         
-        String? datePart;
-        if (slot.dateStart != null && slot.dateStart!.contains(' ')) {
-          datePart = slot.dateStart!.split(' ')[0];
-        } else {
-          datePart = slot.dateStart;
-        }
-
         if (inTime != null) {
-          data['checkin'] = inTime.isEmpty ? null : (datePart != null ? '$datePart $inTime:00' : null);
+          data['checkin'] = inTime.isEmpty
+              ? null
+              : formatLocalToUtcDateTime(
+                  localHHmm: inTime,
+                  baseDateUtc: slot.dateStart,
+                );
           data['checkinstat'] = inTime.isEmpty ? null : '🟢';
           _checkedSlotIds.add(id);
           _checkedSlotTimes[id] = inTime;
         }
         if (outTime != null) {
-          data['checkout'] = outTime.isEmpty ? null : (datePart != null ? '$datePart $outTime:00' : null);
+          data['checkout'] = outTime.isEmpty
+              ? null
+              : formatLocalToUtcDateTime(
+                  localHHmm: outTime,
+                  baseDateUtc: slot.dateEnd ?? slot.dateStart,
+                );
           _checkedSlotOutIds.add(id);
           _checkedSlotOutTimes[id] = outTime;
         }

@@ -200,13 +200,24 @@ class LocationService {
             timeLimit: const Duration(seconds: 8),
           );
         } catch (e) {
-          return GpsCheckResult.failed(
-            status: GpsStatus.error,
-            message: 'Standort konnte nicht ermittelt werden (GPS-Timeout). Bitte prüfe deinen Empfang.',
-            targetLat: targetLat,
-            targetLon: targetLon,
-            address: address,
-          );
+          // Fallback: Letzte bekannte Position prüfen (z. B. beim Betreten des Gebäudes)
+          try {
+            final lastKnown = await Geolocator.getLastKnownPosition();
+            if (lastKnown != null &&
+                DateTime.now().difference(lastKnown.timestamp).inMinutes <= 45) {
+              position = lastKnown;
+            }
+          } catch (_) {}
+
+          if (position == null) {
+            return GpsCheckResult.failed(
+              status: GpsStatus.error,
+              message: 'Standort konnte im Gebäude nicht ermittelt werden (GPS-Timeout). Bitte prüfe deinen Empfang oder wende dich an die Einsatzleitung.',
+              targetLat: targetLat,
+              targetLon: targetLon,
+              address: address,
+            );
+          }
         }
       }
 
