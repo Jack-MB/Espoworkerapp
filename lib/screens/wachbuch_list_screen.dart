@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io' show File;
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../services/api_service.dart';
 import '../services/sync_queue_service.dart';
@@ -233,13 +234,16 @@ class _WachbuchListScreenState extends State<WachbuchListScreen> {
             try {
               final result = await FilePicker.platform.pickFiles(
                 allowMultiple: true,
+                withData: true,
                 type: FileType.custom,
                 allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'txt'],
               );
               if (result != null && result.files.isNotEmpty) {
                 setDialogState(() {
                   for (final f in result.files) {
-                    if (f.path != null) {
+                    if (f.bytes != null) {
+                      pendingFiles.add(XFile.fromData(f.bytes!, name: f.name));
+                    } else if (f.path != null) {
                       pendingFiles.add(XFile(f.path!, name: f.name));
                     }
                   }
@@ -391,9 +395,21 @@ class _WachbuchListScreenState extends State<WachbuchListScreen> {
                                 ),
                                 clipBehavior: Clip.antiAlias,
                                 child: isImg
-                                    ? (kIsWeb
-                                        ? Image.network(file.path, fit: BoxFit.cover)
-                                        : Image.file(File(file.path), fit: BoxFit.cover))
+                                    ? FutureBuilder<Uint8List>(
+                                        future: file.readAsBytes(),
+                                        builder: (context, snapshot) {
+                                          if (snapshot.hasData) {
+                                            return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                                          }
+                                          return const Center(
+                                            child: SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(strokeWidth: 2),
+                                            ),
+                                          );
+                                        },
+                                      )
                                     : Column(
                                         mainAxisAlignment: MainAxisAlignment.center,
                                         children: [

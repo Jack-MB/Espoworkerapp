@@ -2061,19 +2061,32 @@ class ApiService {
   Future<Map<String, dynamic>?> getAktiveSchichtInfo() async {
     try {
       final now = DateTime.now();
+      final myAngestellteId = await _storageService.getAngestellteId();
+      final myUserId = await _storageService.getUserId();
+
       final slots = await getSlots(
         startDate: now.subtract(const Duration(days: 1)),
         endDate: now.add(const Duration(days: 1)),
       );
+
+      // 1. Vorrangig Schichten filtern, die dem eingeloggten Mitarbeiter gehören!
+      final mySlots = (myAngestellteId != null && myAngestellteId.isNotEmpty)
+          ? slots.where((s) => s.angestellteId == myAngestellteId).toList()
+          : slots;
+
       Slot? activeSlot;
-      for (final s in slots) {
+
+      // Priorität 1: Eigene Schicht mit aktivem Check-in
+      for (final s in mySlots) {
         if (s.checkin != null && s.checkout == null) {
           activeSlot = s;
           break;
         }
       }
+
+      // Priorität 2: Eigene Schicht, deren Zeitfenster aktuell läuft (±30 Min Puffer)
       if (activeSlot == null) {
-        for (final s in slots) {
+        for (final s in mySlots) {
           if (s.dateStart != null && s.dateEnd != null) {
             try {
               final start = espoUtcToLocal(s.dateStart!);
@@ -2087,6 +2100,25 @@ class ApiService {
           }
         }
       }
+
+      // Priorität 3: Falls der Benutzer keine eigene Schicht hat, aber als Einsatzleiter eingeteilt ist
+      if (activeSlot == null && myAngestellteId != null) {
+        final elSlots = slots.where((s) => s.einsatzleiterId == myAngestellteId).toList();
+        for (final s in elSlots) {
+          if (s.dateStart != null && s.dateEnd != null) {
+            try {
+              final start = espoUtcToLocal(s.dateStart!);
+              final end = espoUtcToLocal(s.dateEnd!);
+              if (now.isAfter(start.subtract(const Duration(minutes: 30))) &&
+                  now.isBefore(end.add(const Duration(minutes: 30)))) {
+                activeSlot = s;
+                break;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
       if (activeSlot == null) return null;
 
       Wachbuch? matchingWb;
