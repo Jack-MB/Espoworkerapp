@@ -23,6 +23,7 @@ import '../models/email_template.dart';
 import '../models/chat_room.dart';
 import '../models/chat_message.dart';
 import '../models/arbeitszeitkonto.dart';
+import '../models/interne_taetigkeit.dart';
 import '../utils/espo_date.dart';
 
 
@@ -52,6 +53,7 @@ class ApiService {
   static const String _cachedBereitschaftKey = 'cached_bereitschaft_payload_v1';
   static const String _cachedAbwesenheitKey = 'cached_abwesenheit_payload_v1';
   static const String _cachedMeetingsKey = 'cached_meetings_payload_v1';
+  static const String _cachedInterneTaetigkeitKey = 'cached_interne_taetigkeit_payload_v1';
   bool _isLastSlotsFromCache = false;
   bool get isLastSlotsFromCache => _isLastSlotsFromCache;
 
@@ -983,6 +985,47 @@ class ApiService {
       }
     } catch (_) {}
     return <Bereitschaft>[];
+  }
+
+  Future<List<InterneTaetigkeit>> getInterneTaetigkeiten() async {
+    try {
+      final now = DateTime.now();
+      final from = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 60));
+      final to = now.add(const Duration(days: 180));
+      final fromStr = '${from.year.toString().padLeft(4, '0')}-${from.month.toString().padLeft(2, '0')}-${from.day.toString().padLeft(2, '0')}';
+      final toStr = '${to.year.toString().padLeft(4, '0')}-${to.month.toString().padLeft(2, '0')}-${to.day.toString().padLeft(2, '0')}';
+      final url = Uri.parse(
+        '${ServerConfig().apiUrl}/InterneTaetigkeit?maxSize=200'
+        '&where%5B0%5D%5Btype%5D=greaterThanOrEquals&where%5B0%5D%5Battribute%5D=dateStart&where%5B0%5D%5Bvalue%5D=$fromStr'
+        '&where%5B1%5D%5Btype%5D=lessThanOrEquals&where%5B1%5D%5Battribute%5D=dateStart&where%5B1%5D%5Bvalue%5D=$toStr'
+        '&orderBy=dateStart&order=asc',
+      );
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_cachedInterneTaetigkeitKey, response.body);
+          } catch (_) {}
+          return (data['list'] as List).map((e) => InterneTaetigkeit.fromJson(e)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('getInterneTaetigkeiten error: $e, falling back to cache');
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString(_cachedInterneTaetigkeitKey);
+      if (cached != null && cached.isNotEmpty) {
+        final data = json.decode(cached);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => InterneTaetigkeit.fromJson(e)).toList();
+        }
+      }
+    } catch (_) {}
+    return <InterneTaetigkeit>[];
   }
 
   /// Resolves and caches the Angestellte record linked to the current user

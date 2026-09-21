@@ -44,6 +44,7 @@ import '../models/angestellte.dart';
 import '../models/abwesenheit.dart';
 import '../models/meeting.dart';
 import '../models/bereitschaft.dart';
+import '../models/interne_taetigkeit.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -143,6 +144,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   bool _showKrank = true;
   bool _showAbwesenheit = true;
   bool _showMeetings = true;
+  bool _showInterneTaetigkeit = true;
   bool _persistFilters = false;
 
   // Counts for filters
@@ -151,6 +153,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   int _countKrank = 0;
   int _countAbwesenheit = 0;
   int _countMeetings = 0;
+  int _countInterneTaetigkeit = 0;
   bool? _serverOnline;
   String _pushPermission = 'granted';
   List<Map<String, dynamic>> _upcomingBirthdays = [];
@@ -849,12 +852,14 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           _showKrank = prefs.getBool('show_krank') ?? true;
           _showAbwesenheit = prefs.getBool('show_abwesenheit') ?? true;
           _showMeetings = prefs.getBool('show_meetings') ?? true;
+          _showInterneTaetigkeit = prefs.getBool('show_interne_taetigkeit') ?? true;
         } else {
           _showSlots = true;
           _showUrlaub = true;
           _showKrank = true;
           _showAbwesenheit = true;
           _showMeetings = true;
+          _showInterneTaetigkeit = true;
         }
       });
     }
@@ -869,6 +874,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       await prefs.setBool('show_krank', _showKrank);
       await prefs.setBool('show_abwesenheit', _showAbwesenheit);
       await prefs.setBool('show_meetings', _showMeetings);
+      await prefs.setBool('show_interne_taetigkeit', _showInterneTaetigkeit);
     }
   }
 
@@ -933,6 +939,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         _apiService.getAbwesenheiten().catchError((_) => <Abwesenheit>[]),
         _apiService.getMeetings().catchError((_) => <Meeting>[]),
         _apiService.getBereitschaften().catchError((_) => <Bereitschaft>[]),
+        _apiService.getInterneTaetigkeiten().catchError((_) => <InterneTaetigkeit>[]),
       ]).timeout(const Duration(seconds: 15));
 
       final allSlots = (results[0] is List) ? (results[0] as List).whereType<Slot>().toList() : <Slot>[];
@@ -941,12 +948,14 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       final allAbwesenheiten = (results[3] is List) ? (results[3] as List).whereType<Abwesenheit>().toList() : <Abwesenheit>[];
       final allMeetings = (results[4] is List) ? (results[4] as List).whereType<Meeting>().toList() : <Meeting>[];
       final allBereitschaften = (results[5] is List) ? (results[5] as List).whereType<Bereitschaft>().toList() : <Bereitschaft>[];
+      final allInterneTaetigkeiten = (results[6] is List) ? (results[6] as List).whereType<InterneTaetigkeit>().toList() : <InterneTaetigkeit>[];
 
       _countSlots = allSlots.length;
       _countUrlaub = allUrlaubs.length;
       _countKrank = allKrankentage.length;
       _countAbwesenheit = allAbwesenheiten.length;
       _countMeetings = allMeetings.length;
+      _countInterneTaetigkeit = allInterneTaetigkeiten.length;
 
       final slots = _showSlots ? allSlots : [];
       final urlaubs = _showUrlaub ? allUrlaubs : [];
@@ -955,6 +964,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       final meetings = _showMeetings ? allMeetings : [];
       // Bereitschaften immer anzeigen (kein Toggle)
       final bereitschaften = allBereitschaften;
+      final interneTaetigkeiten = _showInterneTaetigkeit ? allInterneTaetigkeiten : [];
 
     for (var slot in slots) {
       if (slot.dateStart != null && slot.dateEnd != null) {
@@ -1075,6 +1085,54 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             background: const Color(0xFFFF8C00), // orange
             originalObject: b,
           ));
+        } catch (_) {}
+      }
+    }
+
+    // Interne Tätigkeiten (Schule, Büroschichten, Fortbildung)
+    for (var it in interneTaetigkeiten) {
+      if (it.dateStart != null && it.dateEnd != null) {
+        try {
+          final startLocal = format.parseUtc(it.dateStart!).toLocal();
+          final endLocal = format.parseUtc(it.dateEnd!).toLocal();
+
+          Color bg;
+          try {
+            final hex = it.color.replaceAll('#', '');
+            bg = Color(int.parse('FF$hex', radix: 16));
+          } catch (_) {
+            bg = it.typ == 'Schultag' ? const Color(0xFF0EA5E9) : const Color(0xFF6366F1);
+          }
+
+          final displayTitle = it.name.isNotEmpty ? it.name : it.typ;
+          final displaySubtitle = '${it.typ} • ${it.stunden.toStringAsFixed(1)} Std.${it.ort != null && it.ort!.isNotEmpty ? ' • ${it.ort}' : ''}';
+
+          if (it.isAllDay) {
+            final startDay = DateTime(startLocal.year, startLocal.month, startLocal.day);
+            DateTime endDay = DateTime(endLocal.year, endLocal.month, endLocal.day);
+            if (endDay.isAfter(startDay)) {
+              endDay = endDay.subtract(const Duration(days: 1));
+            }
+            events.add(ScheduledEvent(
+              displayTitle,
+              subtitle: displaySubtitle,
+              from: startDay,
+              to: endDay,
+              isAllDay: true,
+              background: bg,
+              originalObject: it,
+            ));
+          } else {
+            events.add(ScheduledEvent(
+              displayTitle,
+              subtitle: displaySubtitle,
+              from: startLocal,
+              to: endLocal,
+              isAllDay: false,
+              background: bg,
+              originalObject: it,
+            ));
+          }
         } catch (_) {}
       }
     }
@@ -1347,6 +1405,17 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 _buildDetailRow(Icons.description, 'Beschreibung', obj.description!),
             ],
 
+            if (obj is InterneTaetigkeit) ...[
+              _buildDetailRow(Icons.category_outlined, 'Tätigkeit', obj.typ),
+              _buildDetailRow(Icons.info_outline, 'Status', obj.status),
+              _buildDetailRow(Icons.access_time, 'Stunden', '${obj.stunden.toStringAsFixed(1)} Std.'),
+              if (obj.pause > 0) _buildDetailRow(Icons.coffee_outlined, 'Pause', '${obj.pause} Min.'),
+              if (obj.ort != null && obj.ort!.isNotEmpty)
+                _buildDetailRow(Icons.location_on_outlined, 'Ort', obj.ort!),
+              if (obj.beschreibung != null && obj.beschreibung!.isNotEmpty)
+                _buildDetailRow(Icons.description_outlined, 'Notiz', obj.beschreibung!),
+            ],
+
             if (obj is Abwesenheit) ...[
               _buildDetailRow(Icons.timer_off, 'Typ', 'Termin / Abwesenheit'),
               if (obj.description != null && obj.description!.isNotEmpty) 
@@ -1593,6 +1662,18 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   });
                 },
               ),
+              CheckboxListTile(
+                title: Text('Schule & Büro ($_countInterneTaetigkeit)'),
+                secondary: const Icon(Icons.school_outlined, color: Color(0xFF0EA5E9)),
+                value: _showInterneTaetigkeit,
+                onChanged: (val) {
+                  setDialogState(() => _showInterneTaetigkeit = val!);
+                  setState(() {
+                    _refreshEvents();
+                    if (_persistFilters) _savePreferences();
+                  });
+                },
+              ),
             ],
           ),
           actions: [
@@ -1620,6 +1701,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   _showKrank = true;
                   _showAbwesenheit = true;
                   _showMeetings = true;
+                  _showInterneTaetigkeit = true;
                 });
                 setState(() {
                   _refreshEvents();
