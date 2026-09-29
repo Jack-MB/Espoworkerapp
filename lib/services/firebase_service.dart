@@ -49,6 +49,15 @@ class FirebaseService {
       // Im Hintergrund behandeln
       FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
+      // Auf iOS native Vordergrund-Benachrichtigungen aktivieren (Banner, Badge, Ton)
+      if (Platform.isIOS) {
+        await _messaging.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+      }
+
       // Token-Aktualisierungen beobachten
       _messaging.onTokenRefresh.listen((newToken) async {
         debugPrint('FCM Token refreshed: $newToken');

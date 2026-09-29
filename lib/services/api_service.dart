@@ -777,9 +777,35 @@ class ApiService {
   }
 
   Future<List<Note>> getWachbuchNotes(String wachbuchId) async {
-    // Use Uri constructor to avoid double-encoding of bracket characters
     final baseUri = Uri.parse(ServerConfig().apiUrl);
-    final url = Uri(
+    
+    // 1. Primär: Offizieller EspoCRM Stream-Posts-Endpunkt für das spezifische Wachbuch
+    final streamUrl = Uri(
+      scheme: baseUri.scheme,
+      host: baseUri.host,
+      port: baseUri.hasPort ? baseUri.port : null,
+      path: '${baseUri.path}/CWachbuch/$wachbuchId/posts',
+      queryParameters: {
+        'maxSize': '100',
+        'orderBy': 'createdAt',
+        'order': 'desc',
+      },
+    );
+
+    try {
+      final response = await _HttpWithTimeout.get(streamUrl, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Note.fromJson(e)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('Stream posts endpoint failed, fallback to Note endpoint: $e');
+    }
+
+    // 2. Fallback: Direkter /Note Endpunkt mit Wachbuch-Filter
+    final fallbackUrl = Uri(
       scheme: baseUri.scheme,
       host: baseUri.host,
       port: baseUri.hasPort ? baseUri.port : null,
@@ -797,13 +823,15 @@ class ApiService {
         'select': 'id,post,type,createdAt,createdById,createdByName,parentType,parentId,attachmentsIds,attachmentsNames,attachmentsTypes',
       },
     );
-    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['list'] != null) {
-        return (data['list'] as List).map((e) => Note.fromJson(e)).toList();
+    try {
+      final response = await _HttpWithTimeout.get(fallbackUrl, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Note.fromJson(e)).toList();
+        }
       }
-    }
+    } catch (_) {}
     return [];
   }
 
