@@ -1,10 +1,12 @@
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/secure_storage_service.dart';
 import '../models/email.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../core/server_config.dart';
 import 'email_compose_screen.dart';
 
@@ -313,10 +315,37 @@ class _AttachmentTileState extends State<_AttachmentTile> {
   String get _downloadUrl =>
       '${ServerConfig().baseUrl}/?entryPoint=download&id=${widget.attachment.id}';
 
+  bool _isDownloading = false;
+
   Future<void> _open() async {
-    final uri = Uri.parse(_downloadUrl);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (_isDownloading) return;
+    setState(() => _isDownloading = true);
+    try {
+      final bytes = await ApiService().downloadAttachmentBytes(widget.attachment.id);
+      if (bytes != null && bytes.isNotEmpty) {
+        final tempDir = await getTemporaryDirectory();
+        final safeName = widget.attachment.name.replaceAll(RegExp(r'[^\w\.\-]'), '_');
+        final file = File('${tempDir.path}/$safeName');
+        await file.writeAsBytes(bytes);
+        final res = await OpenFilex.open(file.path);
+        if (res.type != ResultType.done && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Anhang gespeichert: ${file.path}')),
+          );
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fehler beim Herunterladen des Anhangs.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Fehler beim Öffnen: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isDownloading = false);
     }
   }
 

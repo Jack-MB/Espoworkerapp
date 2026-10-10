@@ -131,6 +131,22 @@
         }, 350);
       }
     }, 6000);
+
+    // Automatic PWA version synchronization (Purge stale cache on version mismatch)
+    fetch('/version.json?t=' + Date.now())
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data && data.build_number) {
+          var currentBuild = localStorage.getItem('mb_worker_pwa_build');
+          if (currentBuild && currentBuild !== String(data.build_number)) {
+            localStorage.setItem('mb_worker_pwa_build', String(data.build_number));
+            window.location.replace('/update.html');
+            return;
+          }
+          localStorage.setItem('mb_worker_pwa_build', String(data.build_number));
+        }
+      })
+      .catch(function() {});
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>

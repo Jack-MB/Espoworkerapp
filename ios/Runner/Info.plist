@@ -58,7 +58,7 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Die App benötigt Zugriff auf deinen Standort, um den Check-in am Einsatzort zu verifizieren.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Die App benötigt Zugriff auf die Kamera, um Fotos von Dokumenten oder Berichten zu machen.</string>
+	<string>Die App benötigt Zugriff auf die Kamera, um QR-Codes und Labels von Material- und Kleidungsdepots zu scannen sowie Dokumente zu erfassen.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Die App benötigt Zugriff auf deine Fotogalerie, damit du vorhandene Dokumente hochladen kannst.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

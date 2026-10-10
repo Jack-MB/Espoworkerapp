@@ -20,6 +20,25 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       );
     }
     debugPrint("Handling a background message: ${message.messageId}");
+
+    // Falls die Nachricht im Hintergrund ankommt und kein automatisches Notification-Objekt hat:
+    if (message.notification == null && message.data.isNotEmpty) {
+      final title = message.data['title']?.toString() ?? 'MB-SCC Leitstelle';
+      final body = (message.data['body'] ?? message.data['message'])?.toString() ?? '';
+      if (body.trim().isNotEmpty) {
+        await NotificationService().initialize();
+        final entityType = message.data['relatedType'] ?? message.data['entityType'];
+        final entityId = message.data['relatedId'] ?? message.data['entityId'];
+        final payload = entityId != null ? '$entityType:$entityId' : entityType?.toString();
+
+        await NotificationService().showNotification(
+          id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          title: title,
+          body: body,
+          payload: payload,
+        );
+      }
+    }
   } catch (e) {
     debugPrint("Background message handler error: $e");
   }
@@ -71,8 +90,10 @@ class FirebaseService {
         debugPrint('Got a message whilst in the foreground!');
         debugPrint('Message data: ${message.data}');
 
-        if (message.notification != null) {
-          debugPrint('Message notification: ${message.notification?.title} - ${message.notification?.body}');
+        final title = message.notification?.title ?? message.data['title']?.toString() ?? 'MB-SCC Benachrichtigung';
+        final body = message.notification?.body ?? (message.data['body'] ?? message.data['message'])?.toString() ?? '';
+
+        if (body.trim().isNotEmpty) {
           final entityType = message.data['relatedType'] ?? message.data['entityType'];
           final entityId = message.data['relatedId'] ?? message.data['entityId'];
 
@@ -88,8 +109,8 @@ class FirebaseService {
 
           NotificationService().showNotification(
             id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-            title: message.notification?.title ?? 'EspoCRM Benachrichtigung',
-            body: message.notification?.body ?? '',
+            title: title,
+            body: body,
             payload: payload,
           );
         }

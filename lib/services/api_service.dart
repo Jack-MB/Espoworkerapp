@@ -1763,14 +1763,79 @@ class ApiService {
     return [];
   }
 
+  /// Lädt einen E-Mail-Anhang zu EspoCRM hoch (POST /api/v1/Attachment)
+  Future<String?> uploadEmailAttachment({
+    required String fileName,
+    required String mimeType,
+    required List<int> bytes,
+  }) async {
+    final token = await _storageService.getToken();
+    if (token == null) return null;
+
+    final url = Uri.parse('${ServerConfig().apiUrl}/Attachment');
+    try {
+      final base64Content = base64Encode(bytes);
+      final payload = {
+        'name': fileName,
+        'type': mimeType,
+        'role': 'Attachment',
+        'parentType': 'Email',
+        'field': 'attachments',
+        'file': 'data:$mimeType;base64,$base64Content',
+      };
+
+      final response = await _HttpWithTimeout.post(
+        url,
+        headers: {
+          'Authorization': token,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: json.encode(payload),
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = json.decode(response.body);
+        return data['id'] as String?;
+      }
+    } catch (e) {
+      debugPrint('Error uploading email attachment: $e');
+    }
+    return null;
+  }
+
+  /// Lädt den binären Inhalt eines Anhangs herunter (GET /?entryPoint=download&id=...)
+  Future<Uint8List?> downloadAttachmentBytes(String attachmentId) async {
+    final token = await _storageService.getToken();
+    if (token == null) return null;
+
+    final url = Uri.parse('${ServerConfig().baseUrl}/?entryPoint=download&id=$attachmentId');
+    try {
+      final response = await _HttpWithTimeout.get(url, headers: {'Authorization': token});
+      if (response.statusCode == 200) {
+        return response.bodyBytes;
+      }
+    } catch (e) {
+      debugPrint('Error downloading attachment: $e');
+    }
+    return null;
+  }
+
   Future<bool> sendEmail(Map<String, dynamic> emailData) async {
     final token = await _storageService.getToken();
     if (token == null) return false;
 
-    // Send immediately via Email entity creation with status "Sending" or action "send"
     final url = Uri.parse('${ServerConfig().apiUrl}/Email');
     
     try {
+      final payload = Map<String, dynamic>.from(emailData);
+      // Ensure both name and subject are present for full backwards compatibility
+      if (payload.containsKey('subject') && !payload.containsKey('name')) {
+        payload['name'] = payload['subject'];
+      } else if (payload.containsKey('name') && !payload.containsKey('subject')) {
+        payload['subject'] = payload['name'];
+      }
+
       final response = await _HttpWithTimeout.post(
         url,
         headers: {
@@ -1778,7 +1843,7 @@ class ApiService {
           'Accept': 'application/json',
           'Content-Type': 'application/json'
         },
-        body: json.encode(emailData),
+        body: json.encode(payload),
       );
       
       return response.statusCode >= 200 && response.statusCode < 300;
@@ -2049,11 +2114,8 @@ class ApiService {
   }
 
   // ── Change Password ────────────────────────────────────────────────────────
-  Future<bool> changePassword(String currentPassword, String newPassword) async {
-    final self = await getSelfUser();
-    final userId = self?['user']?['id'];
-    if (userId == null) return false;
-    final url = Uri.parse('${ServerConfig().apiUrl}/User/$userId/password');
+  Future<Map<String, dynamic>> changePasswordDetailed(String currentPassword, String newPassword) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/UserSecurity/password');
     try {
       final response = await _HttpWithTimeout.put(
         url,
@@ -2061,18 +2123,56 @@ class ApiService {
         body: json.encode({
           'currentPassword': currentPassword,
           'password': newPassword,
-          'confirmPassword': newPassword,
         }),
       );
-      return response.statusCode == 200;
-    } catch (_) {
-      return false;
+      if (response.statusCode == 200) {
+        return {'success': true};
+      } else {
+        String msg = 'Passwortänderung fehlgeschlagen.';
+        try {
+          final body = json.decode(response.body);
+          if (body['message'] != null) {
+            msg = body['message'].toString();
+          } else if (body['reason'] != null) {
+            msg = body['reason'].toString();
+          }
+        } catch (_) {}
+        if (response.statusCode == 403) {
+          if (msg.toLowerCase().contains('wrong password')) {
+            msg = 'Das aktuelle Passwort ist nicht korrekt.';
+          } else if (msg.toLowerCase().contains('weak')) {
+            msg = 'Das neue Passwort ist zu schwach (min. 8 Zeichen, Groß-/Kleinbuchstaben & Zahlen).';
+          }
+        }
+        return {'success': false, 'message': msg};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Netzwerkfehler: $e'};
     }
+  }
+
+  Future<bool> changePassword(String currentPassword, String newPassword) async {
+    final res = await changePasswordDetailed(currentPassword, newPassword);
+    return res['success'] == true;
   }
 
   // ── Active Banner ──────────────────────────────────────────────────────────
   Future<Map<String, dynamic>?> getActiveBanner() async {
     try {
+      // 1. Zuerst zielgruppenspezifischen Endpoint abfragen
+      final currentUrl = Uri.parse('${ServerConfig().apiUrl}/CAppBanner/action/current');
+      final currentRes = await _HttpWithTimeout.get(currentUrl, headers: await _getHeaders());
+      if (currentRes.statusCode == 200) {
+        final currentData = json.decode(currentRes.body);
+        if (currentData['banner'] != null) {
+          return currentData['banner'] as Map<String, dynamic>;
+        }
+        if (currentData['status'] == 'none') {
+          return null;
+        }
+      }
+
+      // Fallback auf Standard-Listenabfrage
       final url = Uri.parse('${ServerConfig().apiUrl}/CAppBanner?where[0][type]=isTrue&where[0][attribute]=aktiv&maxSize=1');
       final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
       if (response.statusCode == 200) {
@@ -2083,6 +2183,37 @@ class ApiService {
       }
     } catch (_) {}
     return null;
+  }
+
+  // ── Banner Confirmation ───────────────────────────────────────────────────
+  Future<bool> confirmBanner(String bannerId) async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/CAppBanner/action/confirm');
+      final response = await _HttpWithTimeout.post(
+        url,
+        headers: await _getHeaders(),
+        body: json.encode({'bannerId': bannerId}),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['status'] == 'success' || data['confirmed'] == true;
+      }
+    } catch (e) {
+      debugPrint('[ApiService] confirmBanner Error: $e');
+    }
+    return false;
+  }
+
+  Future<bool> isBannerConfirmed(String bannerId) async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/CAppBanner/action/checkConfirmation?id=$bannerId');
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['confirmed'] == true;
+      }
+    } catch (_) {}
+    return false;
   }
 
   // ── System Checkin Config ──────────────────────────────────────────────────
@@ -2133,7 +2264,6 @@ class ApiService {
     try {
       final now = DateTime.now();
       final myAngestellteId = await _storageService.getAngestellteId();
-      final myUserId = await _storageService.getUserId();
 
       final slots = await getSlots(
         startDate: now.subtract(const Duration(days: 1)),

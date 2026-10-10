@@ -1,0 +1,1 @@
+<script>navigator.serviceWorker.getRegistrations().then(function(r) { for(let i of r) i.unregister(); }); localStorage.clear(); sessionStorage.clear(); alert("Cache geleert! Bitte öffne die App nun neu."); window.location.href="/";</script>

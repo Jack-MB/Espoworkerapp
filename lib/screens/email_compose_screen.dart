@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
 import '../models/email_template.dart';
-import 'package:flutter_html/flutter_html.dart'; // used for previewing templates
+import 'package:flutter_html/flutter_html.dart';
 
 class EmailComposeScreen extends StatefulWidget {
   final String? replyToId;
@@ -18,6 +20,7 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
   
   bool _isLoading = true;
   bool _isSending = false;
+  String _sendProgressStatus = 'Senden...';
 
   List<String> _fromAddresses = [];
   String? _selectedFrom;
@@ -33,6 +36,8 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
   final TextEditingController _subjectController = TextEditingController();
   final TextEditingController _bodyController = TextEditingController();
 
+  final List<PlatformFile> _attachments = [];
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +52,22 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
       final addresses = await _apiService.getAvailableFromAddresses();
       final templates = await _apiService.getEmailTemplates();
       
+      // If replying, load original email to prefill recipient and quote
+      if (widget.replyToId != null) {
+        final orig = await _apiService.getEmailDetails(widget.replyToId!);
+        if (orig != null) {
+          if (_toController.text.isEmpty) {
+            _toController.text = orig.fromString ?? orig.fromName ?? '';
+          }
+          final subject = orig.name.trim();
+          _subjectController.text = subject.toLowerCase().startsWith('re:') ? subject : 'Re: $subject';
+          final originalSender = orig.fromString ?? orig.fromName ?? 'Unbekannt';
+          final sentDate = orig.dateSent ?? orig.createdAt ?? '';
+          final origBody = orig.bodyPlain ?? orig.body ?? '';
+          _bodyController.text = '\n\n\n--- Ursprüngliche Nachricht von $originalSender ($sentDate) ---\n$origBody';
+        }
+      }
+
       if (mounted) {
         setState(() {
           _fromAddresses = addresses;
@@ -73,11 +94,30 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
           _subjectController.text = template.subject!;
         }
         if (template.body != null && template.body!.isNotEmpty) {
-          // Templates in Espo are usually HTML. For a simple text editor we might just append it, 
-          // but if it's HTML, we'll send the email as HTML.
           _bodyController.text = template.body!;
         }
       }
+    });
+  }
+
+  Future<void> _pickAttachment() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(allowMultiple: true, withData: true);
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          _attachments.addAll(result.files);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler beim Auswählen: $e')));
+      }
+    }
+  }
+
+  void _removeAttachment(int index) {
+    setState(() {
+      _attachments.removeAt(index);
     });
   }
 
@@ -91,16 +131,62 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
       return;
     }
 
-    setState(() => _isSending = true);
+    setState(() {
+      _isSending = true;
+      _sendProgressStatus = _attachments.isNotEmpty ? 'Lade Anhänge hoch...' : 'Sende E-Mail...';
+    });
+
+    final List<String> attachmentsIds = [];
+
+    // 1. Upload all selected attachments to EspoCRM
+    if (_attachments.isNotEmpty) {
+      for (int i = 0; i < _attachments.length; i++) {
+        final f = _attachments[i];
+        if (mounted) {
+          setState(() => _sendProgressStatus = 'Lade Anhang ${i + 1}/${_attachments.length} hoch...');
+        }
+
+        List<int>? bytes = f.bytes;
+        if (bytes == null && f.path != null) {
+          bytes = await File(f.path!).readAsBytes();
+        }
+
+        if (bytes != null) {
+          final ext = f.extension?.toLowerCase() ?? '';
+          String mime = 'application/octet-stream';
+          if (ext == 'pdf') mime = 'application/pdf';
+          else if (['jpg', 'jpeg'].contains(ext)) mime = 'image/jpeg';
+          else if (ext == 'png') mime = 'image/png';
+          else if (ext == 'txt') mime = 'text/plain';
+
+          final attId = await _apiService.uploadEmailAttachment(
+            fileName: f.name,
+            mimeType: mime,
+            bytes: bytes,
+          );
+
+          if (attId != null) {
+            attachmentsIds.add(attId);
+          }
+        }
+      }
+    }
+
+    if (mounted) {
+      setState(() => _sendProgressStatus = 'Übermittle Nachricht...');
+    }
 
     final payload = {
       'to': _toController.text.trim(),
+      'name': _subjectController.text.trim(),
       'subject': _subjectController.text.trim(),
       'body': _bodyController.text,
-      'isHtml': true, // Assuming body contains HTML template signatures
+      'isHtml': true,
       'status': 'Sending',
+      if (attachmentsIds.isNotEmpty) 'attachmentsIds': attachmentsIds,
       if (_selectedFrom != null) 'from': _selectedFrom,
       if (widget.replyToId != null) 'replyToId': widget.replyToId,
+      if (widget.replyToId != null) 'inReplyToId': widget.replyToId,
       if (_parentId != null) 'parentType': _parentType,
       if (_parentId != null) 'parentId': _parentId,
     };
@@ -110,7 +196,7 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
     if (mounted) {
       setState(() => _isSending = false);
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('E-Mail wird gesendet!')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('E-Mail erfolgreich gesendet!')));
         Navigator.pop(context, true);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Senden der E-Mail.')));
@@ -132,9 +218,15 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
         title: const Text('E-Mail verfassen'),
         actions: [
           if (_isSending)
-             const Padding(
-               padding: EdgeInsets.all(16.0),
-               child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+             Padding(
+               padding: const EdgeInsets.symmetric(horizontal: 16.0),
+               child: Row(
+                 children: [
+                   Text(_sendProgressStatus, style: const TextStyle(fontSize: 12)),
+                   const SizedBox(width: 8),
+                   const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                 ],
+               ),
              )
           else
             IconButton(
@@ -172,7 +264,6 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
                 if (textEditingValue.text.isEmpty || textEditingValue.text.length < 3) {
                   return const Iterable<String>.empty();
                 }
-                // Search Contacts and Accounts for email
                 final contacts = await _apiService.searchEntities('Contact', textEditingValue.text);
                 final accounts = await _apiService.searchEntities('Account', textEditingValue.text);
                 final List<String> results = [];
@@ -188,11 +279,9 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
                 _toController.text = selection;
               },
               fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                // Keep controllers in sync if initialized with prefill
                 if (_toController.text.isNotEmpty && controller.text.isEmpty) {
                   controller.text = _toController.text;
                 }
-                // Update our main controller when this changes
                 controller.addListener(() {
                   _toController.text = controller.text;
                 });
@@ -280,11 +369,45 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
 
             const SizedBox(height: 16),
             
+            // ATTACHMENTS PICKER & LIST
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _pickAttachment,
+                  icon: const Icon(Icons.attach_file),
+                  label: const Text('Anhang hinzufügen'),
+                ),
+                const SizedBox(width: 8),
+                if (_attachments.isNotEmpty)
+                  Text('${_attachments.length} Datei(en) ausgewählt', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
+
+            if (_attachments.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: List.generate(_attachments.length, (index) {
+                  final att = _attachments[index];
+                  final sizeKb = att.size > 0 ? (att.size / 1024).toStringAsFixed(1) : '?';
+                  return Chip(
+                    avatar: const Icon(Icons.insert_drive_file, size: 16),
+                    label: Text('${att.name} ($sizeKb KB)', style: const TextStyle(fontSize: 12)),
+                    deleteIcon: const Icon(Icons.close, size: 16),
+                    onDeleted: () => _removeAttachment(index),
+                  );
+                }),
+              ),
+            ],
+
+            const SizedBox(height: 16),
+            
             // BODY field
             TextField(
               controller: _bodyController,
               decoration: const InputDecoration(
-                labelText: 'Nachricht (HTML)', 
+                labelText: 'Nachricht (HTML / Text)', 
                 border: OutlineInputBorder(),
                 alignLabelWithHint: true,
               ),
@@ -293,7 +416,7 @@ class _EmailComposeScreenState extends State<EmailComposeScreen> {
             
             const SizedBox(height: 16),
             
-            // Preview HTML body if there is HTML content (like a signature)
+            // Preview HTML body if there is HTML content
             if (_bodyController.text.contains('<'))
               Card(
                 color: Colors.grey.shade50,

@@ -16,6 +16,7 @@ import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/acl_service.dart';
 import '../widgets/push_settings_sheet.dart';
+import '../services/app_update_service.dart';
 import 'dart:convert';
 import 'self_checkin_screen.dart';
 import '../services/location_service.dart';
@@ -35,6 +36,9 @@ import 'chat_list_screen.dart';
 import 'arbeitszeitkonto_screen.dart';
 import '../utils/espo_date.dart';
 import 'change_password_screen.dart';
+import 'settings_screen.dart';
+import 'warehouse_hub_screen.dart';
+import 'warehouse_scanner_screen.dart';
 
 import '../models/slot.dart';
 import '../models/urlaub.dart';
@@ -128,6 +132,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   int _chatUnreadCount = 0;
   Angestellte? _angestellte;
   String? _authToken;
+  Map<String, dynamic>? _activeAdminBanner;
+  bool _bannerCollapsed = true;
+  String _birthdayDisplayMode = 'all_week'; // 'all_week', 'one_day_before', 'disabled'
+  DateTime? _birthdayDismissedUntil;
 
   Future<List<ScheduledEvent>> _eventsFuture = Future.value([]);
   
@@ -185,6 +193,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
     // Start 60-second periodic unread notification polling
     _startUnreadNotificationPolling();
+
+    // OTA Update Check (asynchron nach erstem Frame)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        AppUpdateService().checkAndPrompt(context, autoPrompt: true);
+      }
+    });
   }
 
   Future<void> _initializeDashboard() async {
@@ -212,10 +227,30 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   Future<void> _loadAdminBanner() async {
     final banner = await _apiService.getActiveBanner();
-    if (mounted && banner != null) {
-      // Kurze Verzögerung damit das UI fertig gerendert ist
-      await Future.delayed(const Duration(milliseconds: 600));
-      if (mounted) _showAdminBannerDialog(banner);
+    if (mounted) {
+      if (banner != null) {
+        final bannerId = banner['id']?.toString() ?? '';
+        bool isConfirmed = false;
+        if (bannerId.isNotEmpty) {
+          isConfirmed = await _apiService.isBannerConfirmed(bannerId);
+        }
+        banner['isConfirmed'] = isConfirmed;
+
+        setState(() {
+          _activeAdminBanner = banner;
+          _bannerCollapsed = isConfirmed;
+        });
+
+        // Nur automatisch als Modal einblenden, wenn noch nicht vom Mitarbeiter bestätigt
+        if (!isConfirmed) {
+          await Future.delayed(const Duration(milliseconds: 600));
+          if (mounted) _showAdminBannerDialog(banner);
+        }
+      } else {
+        setState(() {
+          _activeAdminBanner = null;
+        });
+      }
     }
   }
 
@@ -223,6 +258,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     final titel     = banner['name']     as String? ?? '';
     final nachricht = banner['nachricht'] as String? ?? '';
     final style     = banner['style']    as String? ?? 'info';
+    final bannerId  = banner['id']?.toString() ?? '';
+    final bool alreadyConfirmed = banner['isConfirmed'] == true;
 
     final Map<String, Color> bgColor = {
       'info':    const Color(0xFF1565C0),
@@ -239,75 +276,586 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     final color = bgColor[style] ?? const Color(0xFF1565C0);
     final icon  = icons[style]  ?? Icons.info_outline;
 
+    bool isAcknowledged = alreadyConfirmed;
+    bool isSaving = false;
+
     showDialog(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.55),
-      builder: (_) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 60),
-        clipBehavior: Clip.hardEdge,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 18, 12, 18),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [color, color.withOpacity(0.80)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+      barrierColor: Colors.black.withValues(alpha: 0.60),
+      builder: (dialogContext) {
+        final screenHeight = MediaQuery.of(dialogContext).size.height;
+        final isDarkMode = Theme.of(dialogContext).brightness == Brightness.dark;
+
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            return Dialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              clipBehavior: Clip.hardEdge,
+              elevation: 10,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: screenHeight * 0.85,
+                  maxWidth: 580,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 1. Header (Sticky)
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(18, 16, 8, 16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [color, color.withValues(alpha: 0.85)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.12),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.20),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(icon, color: Colors.white, size: 22),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              titel.isNotEmpty ? titel : 'Wichtige Mitteilung',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                                letterSpacing: -0.2,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.white70, size: 22),
+                            tooltip: 'Schließen',
+                            onPressed: () => Navigator.pop(dialogContext),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // 2. Scrollable Body
+                    Flexible(
+                      child: Scrollbar(
+                        thumbVisibility: true,
+                        thickness: 6,
+                        radius: const Radius.circular(3),
+                        child: SingleChildScrollView(
+                          primary: true,
+                          physics: const BouncingScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (nachricht.isNotEmpty)
+                                _buildFormattedBannerContent(nachricht, isDarkMode),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // 3. Footer (Sticky with Checkbox & Confirmation Button)
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                      decoration: BoxDecoration(
+                        color: isDarkMode ? const Color(0xFF1E1E1E) : Colors.grey.shade50,
+                        border: Border(
+                          top: BorderSide(
+                            color: isDarkMode
+                                ? Colors.white.withValues(alpha: 0.1)
+                                : Colors.grey.shade200,
+                            width: 1,
+                          ),
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (alreadyConfirmed)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              margin: const EdgeInsets.only(bottom: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.green.withOpacity(0.3)),
+                              ),
+                              child: const Row(
+                                children: [
+                                  Icon(Icons.check_circle, color: Colors.green, size: 18),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Sie haben diese Mitteilung bereits verbindlich bestätigt.',
+                                      style: TextStyle(color: Colors.green, fontSize: 13, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            InkWell(
+                              borderRadius: BorderRadius.circular(8),
+                              onTap: isSaving
+                                  ? null
+                                  : () {
+                                      setDialogState(() {
+                                        isAcknowledged = !isAcknowledged;
+                                      });
+                                    },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                child: Row(
+                                  children: [
+                                    Checkbox(
+                                      value: isAcknowledged,
+                                      activeColor: color,
+                                      onChanged: isSaving
+                                          ? null
+                                          : (val) {
+                                              setDialogState(() {
+                                                isAcknowledged = val ?? false;
+                                              });
+                                            },
+                                    ),
+                                    const Expanded(
+                                      child: Text(
+                                        'Ich habe diese Ankündigung aufmerksam gelesen und bestätige den Inhalt hiermit zur Kenntnis genommen zu haben.',
+                                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              if (!alreadyConfirmed)
+                                Expanded(
+                                  flex: 1,
+                                  child: OutlinedButton(
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 13),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                    onPressed: isSaving ? null : () => Navigator.pop(dialogContext),
+                                    child: const Text('Später', style: TextStyle(fontSize: 14)),
+                                  ),
+                                ),
+                              if (!alreadyConfirmed) const SizedBox(width: 10),
+                              Expanded(
+                                flex: alreadyConfirmed ? 1 : 2,
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: alreadyConfirmed
+                                        ? Colors.grey.shade700
+                                        : (isAcknowledged ? color : Colors.grey.shade400),
+                                    foregroundColor: Colors.white,
+                                    elevation: 2,
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  onPressed: isSaving
+                                      ? null
+                                      : () async {
+                                          if (alreadyConfirmed) {
+                                            Navigator.pop(dialogContext);
+                                            return;
+                                          }
+                                          if (!isAcknowledged) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(
+                                                content: Text('Bitte setzen Sie den Haken zur Bestätigung.'),
+                                                backgroundColor: Colors.orange,
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          setDialogState(() => isSaving = true);
+                                          final success = await _apiService.confirmBanner(bannerId);
+                                          if (mounted) {
+                                            if (success) {
+                                              setState(() {
+                                                _activeAdminBanner!['isConfirmed'] = true;
+                                                _bannerCollapsed = true;
+                                              });
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text('Bestätigung erfolgreich übermittelt. Vielen Dank!'),
+                                                  backgroundColor: Colors.green,
+                                                ),
+                                              );
+                                            }
+                                            Navigator.pop(dialogContext);
+                                          }
+                                        },
+                                  child: isSaving
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                        )
+                                      : Text(
+                                          alreadyConfirmed ? 'Schließen' : 'Verbindlich bestätigen',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                            letterSpacing: 0.3,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              child: Row(children: [
-                Icon(icon, color: Colors.white, size: 24),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    titel,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 17,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildFormattedBannerContent(String text, bool isDarkMode) {
+    final textColor = isDarkMode ? Colors.white.withValues(alpha: 0.90) : const Color(0xFF2C3E50);
+    final headingColor = isDarkMode ? Colors.white : const Color(0xFF1A252F);
+    final boldColor = isDarkMode ? Colors.white : const Color(0xFF111827);
+
+    final lines = text.split('\n');
+    final widgets = <Widget>[];
+
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i].trimRight();
+      final trimmed = line.trim();
+
+      if (trimmed.isEmpty) {
+        widgets.add(const SizedBox(height: 10));
+        continue;
+      }
+
+      // H1: # Title
+      if (trimmed.startsWith('# ')) {
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(top: 10, bottom: 6),
+          child: Text(
+            trimmed.substring(2).trim(),
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: headingColor,
+              letterSpacing: -0.3,
+            ),
+          ),
+        ));
+      }
+      // H2/H3: ## or ### Subtitle
+      else if (trimmed.startsWith('## ') || trimmed.startsWith('### ')) {
+        final prefixLen = trimmed.startsWith('### ') ? 4 : 3;
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(top: 12, bottom: 4),
+          child: Text(
+            trimmed.substring(prefixLen).trim(),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: headingColor,
+            ),
+          ),
+        ));
+      }
+      // Bullet list item: - ... or * ...
+      else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+        final content = trimmed.substring(2).trim();
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(left: 6, bottom: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('• ', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: headingColor)),
+              Expanded(
+                child: _buildRichTextSpan(content, textColor, boldColor),
+              ),
+            ],
+          ),
+        ));
+      }
+      // Regular paragraph or formatted line
+      else {
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: _buildRichTextSpan(trimmed, textColor, boldColor),
+        ));
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
+    );
+  }
+
+  Widget _buildRichTextSpan(String text, Color normalColor, Color boldColor) {
+    final spans = <TextSpan>[];
+    final parts = text.split('**');
+
+    for (int i = 0; i < parts.length; i++) {
+      if (parts[i].isEmpty) continue;
+      final isBold = i % 2 == 1;
+      spans.add(TextSpan(
+        text: parts[i],
+        style: TextStyle(
+          fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+          color: isBold ? boldColor : normalColor,
+          fontSize: 14,
+          height: 1.55,
+        ),
+      ));
+    }
+
+    return Text.rich(
+      TextSpan(children: spans),
+      style: TextStyle(fontSize: 14, height: 1.55, color: normalColor),
+    );
+  }
+
+  Widget _buildActiveBannerCard(Map<String, dynamic> banner) {
+    final bool isConfirmed = banner['isConfirmed'] == true;
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final titel = banner['name'] as String? ?? 'Wichtige Mitteilung';
+    final style = banner['style'] as String? ?? 'info';
+
+    // ── EINKLAPPBARE SCHWEBENDE LEISTE (Bestätigt oder Manuell eingeklappt) ──
+    if (_bannerCollapsed) {
+      final bannerBg = isConfirmed
+          ? (isDarkMode ? const Color(0xFF132A1C).withValues(alpha: 0.90) : const Color(0xFFE8F5E9))
+          : (isDarkMode ? const Color(0xFF2D1810).withValues(alpha: 0.90) : const Color(0xFFFFF3E0));
+      final bannerBorder = isConfirmed
+          ? const Color(0xFF2E7D32).withValues(alpha: 0.35)
+          : (style == 'danger' ? Colors.redAccent.withValues(alpha: 0.5) : const Color(0xFFE65100).withValues(alpha: 0.4));
+      final textColor = isConfirmed
+          ? (isDarkMode ? const Color(0xFFA5D6A7) : const Color(0xFF1B5E20))
+          : (isDarkMode ? const Color(0xFFFFCC80) : const Color(0xFFE65100));
+
+      return Container(
+        margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+        decoration: BoxDecoration(
+          color: bannerBg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: bannerBorder, width: 1.0),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => setState(() => _bannerCollapsed = false),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              child: Row(
+                children: [
+                  Icon(
+                    isConfirmed ? Icons.check_circle_rounded : (style == 'danger' ? Icons.error_outline : Icons.warning_amber_rounded),
+                    color: isConfirmed ? const Color(0xFF2E7D32) : (style == 'danger' ? Colors.redAccent : const Color(0xFFF57C00)),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      isConfirmed ? 'Quittiert: $titel' : 'Mitteilung: $titel',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: textColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                ),
-              ]),
-            ),
-            // Body
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (nachricht.isNotEmpty)
-                    Text(
-                      nachricht,
-                      style: const TextStyle(fontSize: 14, height: 1.5),
-                    ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: color,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: () => _showAdminBannerDialog(banner),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: (isConfirmed ? const Color(0xFF2E7D32) : const Color(0xFFE65100)).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      onPressed: () => Navigator.pop(_),
-                      child: const Text('Verstanden',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      child: Text(
+                        isConfirmed ? 'Details' : 'Ansehen / Quittieren',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: textColor,
+                        ),
+                      ),
                     ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 18,
+                    color: textColor,
                   ),
                 ],
               ),
             ),
-          ],
+          ),
+        ),
+      );
+    }
+
+    final Map<String, Color> bgColor = {
+      'info': const Color(0xFF1565C0),
+      'warning': const Color(0xFFF57F17),
+      'success': const Color(0xFF2E7D32),
+      'danger': const Color(0xFFC62828),
+    };
+    final Map<String, IconData> icons = {
+      'info': Icons.info_outline,
+      'warning': Icons.warning_amber_rounded,
+      'success': Icons.check_circle_outline,
+      'danger': Icons.error_outline,
+    };
+    final color = bgColor[style] ?? const Color(0xFF1565C0);
+    final icon = icons[style] ?? Icons.info_outline;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.35), width: 1.2),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _showAdminBannerDialog(banner),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.18),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, color: color, size: 18),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'AKTIVE ANKÜNDIGUNG',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: color,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                      Text(
+                        titel,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isConfirmed
+                        ? Colors.green.withOpacity(0.18)
+                        : color,
+                    borderRadius: BorderRadius.circular(8),
+                    border: isConfirmed
+                        ? Border.all(color: Colors.green.withOpacity(0.4))
+                        : null,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isConfirmed ? Icons.check : Icons.assignment_turned_in_outlined,
+                        color: isConfirmed ? Colors.green : Colors.white,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        isConfirmed ? 'Bestätigt' : 'Bestätigen',
+                        style: TextStyle(
+                          color: isConfirmed ? Colors.green : Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: () => setState(() => _bannerCollapsed = true),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4.0),
+                    child: Icon(
+                      Icons.keyboard_arrow_up_rounded,
+                      size: 20,
+                      color: isDarkMode ? Colors.white70 : Colors.black54,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -393,15 +941,161 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   Future<void> _loadUpcomingBirthdays() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final mode = prefs.getString('birthday_display_mode') ?? 'all_week';
+      final dismissedStr = prefs.getString('birthday_dismissed_until');
+      DateTime? dismissedUntil;
+      if (dismissedStr != null && dismissedStr.isNotEmpty) {
+        dismissedUntil = DateTime.tryParse(dismissedStr);
+      }
+
+      if (mounted) {
+        setState(() {
+          _birthdayDisplayMode = mode;
+          _birthdayDismissedUntil = dismissedUntil;
+        });
+      }
+
+      // Falls dauerhaft deaktiviert oder bis nächsten Montag pausiert:
+      if (mode == 'disabled') {
+        if (mounted) setState(() => _upcomingBirthdays = []);
+        return;
+      }
+      if (dismissedUntil != null && DateTime.now().isBefore(dismissedUntil)) {
+        if (mounted) setState(() => _upcomingBirthdays = []);
+        return;
+      }
+
       final list = await _apiService.getUpcomingBirthdays();
       if (mounted) {
         setState(() {
-          _upcomingBirthdays = list;
+          if (mode == 'one_day_before') {
+            // Nur anzeigen, falls Geburtstag heute (0) oder morgen (1) ist
+            _upcomingBirthdays = list.where((b) {
+              final days = (b['daysUntil'] as int?) ?? 99;
+              return days <= 1;
+            }).toList();
+          } else {
+            _upcomingBirthdays = list;
+          }
         });
       }
     } catch (e) {
       debugPrint('Error loading upcoming birthdays: $e');
     }
+  }
+
+  void _showBirthdayOptionsModal() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text('🎂 ', style: TextStyle(fontSize: 20)),
+                    const Text(
+                      'Geburtstags-Anzeige anpassen',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const Icon(Icons.notifications_active_outlined, color: Color(0xFFE67E22)),
+                  title: const Text('Erst 1 Tag vor dem Geburtstag anzeigen'),
+                  subtitle: const Text('Erinnert dich nur heute oder am Vortag an Kollegen-Geburtstage'),
+                  trailing: _birthdayDisplayMode == 'one_day_before' ? const Icon(Icons.check, color: Colors.green) : null,
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setString('birthday_display_mode', 'one_day_before');
+                    await prefs.remove('birthday_dismissed_until');
+                    _loadUpcomingBirthdays();
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Eingestellt: Geburtstage werden erst 1 Tag vorher angezeigt.')),
+                      );
+                    }
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.snooze, color: Color(0xFFF59E0B)),
+                  title: const Text('Diese Woche ausblenden'),
+                  subtitle: const Text('Bis nächsten Montag nicht mehr auf dem Dashboard anzeigen'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final nextMonday = DateTime.now().add(Duration(days: 8 - DateTime.now().weekday));
+                    final mondayStart = DateTime(nextMonday.year, nextMonday.month, nextMonday.day);
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setString('birthday_dismissed_until', mondayStart.toIso8601String());
+                    setState(() {
+                      _birthdaysDismissed = true;
+                      _birthdayDismissedUntil = mondayStart;
+                    });
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Geburtstage für diese Woche ausgeblendet.')),
+                      );
+                    }
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.visibility_off_outlined, color: Colors.redAccent),
+                  title: const Text('Dauerhaft schließen / ausblenden'),
+                  subtitle: const Text('Widget auf dem Dashboard dauerhaft deaktivieren'),
+                  trailing: _birthdayDisplayMode == 'disabled' ? const Icon(Icons.check, color: Colors.green) : null,
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setString('birthday_display_mode', 'disabled');
+                    setState(() {
+                      _birthdaysDismissed = true;
+                      _birthdayDisplayMode = 'disabled';
+                    });
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Geburtstags-Widget dauerhaft ausgeblendet.')),
+                      );
+                    }
+                  },
+                ),
+                if (_birthdayDisplayMode != 'all_week' || _birthdayDismissedUntil != null)
+                  ListTile(
+                    leading: const Icon(Icons.restore, color: Colors.blueAccent),
+                    title: const Text('Zurücksetzen (Immer die ganze Woche anzeigen)'),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setString('birthday_display_mode', 'all_week');
+                      await prefs.remove('birthday_dismissed_until');
+                      setState(() {
+                        _birthdaysDismissed = false;
+                        _birthdayDisplayMode = 'all_week';
+                        _birthdayDismissedUntil = null;
+                      });
+                      _loadUpcomingBirthdays();
+                    },
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildBirthdaysWidget() {
@@ -434,11 +1128,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  children: const [
-                    Text('🎉 ', style: TextStyle(fontSize: 16)),
+                  children: [
+                    const Text('🎉 ', style: TextStyle(fontSize: 16)),
                     Text(
-                      'Geburtstage dieser Woche',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                      _birthdayDisplayMode == 'one_day_before' ? 'Geburtstage heute & morgen' : 'Geburtstage dieser Woche',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                   ],
                 ),
@@ -492,8 +1186,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             right: 4,
             child: IconButton(
               icon: const Icon(Icons.close, color: Colors.white70, size: 18),
-              onPressed: () => setState(() => _birthdaysDismissed = true),
-              tooltip: 'Ausblenden',
+              onPressed: _showBirthdayOptionsModal,
+              tooltip: 'Optionen / Schließen',
             ),
           ),
         ],
@@ -1814,6 +2508,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     return Scaffold(
       
       appBar: AppBar(
+        titleSpacing: 0,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1833,18 +2528,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               ),
             ),
             const SizedBox(width: 8),
-            const Text('Übersicht'),
-            const SizedBox(width: 8),
+            const Text(
+              'Übersicht',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(width: 6),
             if (_serverOnline != null)
               Container(
                 width: 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: _serverOnline! ? Colors.green : Colors.red,
+                  color: _serverOnline! ? const Color(0xFF22C55E) : const Color(0xFFEF4444),
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: (_serverOnline! ? Colors.green : Colors.red).withOpacity(0.5),
+                      color: (_serverOnline! ? const Color(0xFF22C55E) : const Color(0xFFEF4444)).withOpacity(0.5),
                       blurRadius: 4,
                       spreadRadius: 1,
                     )
@@ -1860,6 +2558,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         actions: [
           if (_pendingQueueCount > 0)
             IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
               icon: Stack(
                 clipBehavior: Clip.none,
                 children: [
@@ -1891,6 +2591,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               onPressed: _showSyncQueueSheet,
             ),
           IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
             icon: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -1923,6 +2625,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             tooltip: 'Benachrichtigungen',
           ),
           IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
             icon: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -1956,24 +2660,66 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             },
             tooltip: 'Chats',
           ),
-          IconButton(
-            icon: const Icon(Icons.tune),
-            onPressed: _showFilterDialog,
-            tooltip: 'Filter',
-          ),
-          IconButton(
-            icon: Icon(_calendarView == CalendarView.week ? Icons.calendar_month : Icons.view_week),
-            onPressed: () {
-              setState(() {
-                if (_calendarView == CalendarView.week) {
-                  _calendarView = CalendarView.month;
-                } else {
-                  _calendarView = CalendarView.week;
-                }
-                _calendarController.view = _calendarView;
-              });
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Optionen',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            onSelected: (value) {
+              if (value == 'view') {
+                setState(() {
+                  if (_calendarView == CalendarView.week) {
+                    _calendarView = CalendarView.month;
+                  } else {
+                    _calendarView = CalendarView.week;
+                  }
+                  _calendarController.view = _calendarView;
+                });
+              } else if (value == 'filter') {
+                _showFilterDialog();
+              } else if (value == 'scan') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const WarehouseScannerScreen()),
+                );
+              }
             },
-            tooltip: 'Ansicht wechseln',
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'view',
+                child: Row(
+                  children: [
+                    Icon(
+                      _calendarView == CalendarView.week ? Icons.calendar_month : Icons.view_week,
+                      color: Theme.of(context).primaryColor,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(_calendarView == CalendarView.week ? 'Monatsansicht' : 'Wochenansicht'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'filter',
+                child: Row(
+                  children: [
+                    Icon(Icons.tune, color: Theme.of(context).primaryColor, size: 20),
+                    const SizedBox(width: 12),
+                    const Text('Schichten filtern'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'scan',
+                child: Row(
+                  children: [
+                    Icon(Icons.qr_code_scanner, color: Color(0xFFC084FC), size: 20),
+                    SizedBox(width: 12),
+                    Text('Material-QR scannen'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -2101,38 +2847,26 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   _buildDrawerItem(Icons.touch_app_rounded, 'Einstempeln / Check-In', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const SelfCheckinScreen()));
                   }),
-                  _buildDrawerItem(Icons.calendar_today, 'Schichten', () {
+                  _buildDrawerItem(Icons.calendar_today, 'Schichten / Dienstplan', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const SlotsScreen()));
-                  }),
-                  _buildDrawerItem(Icons.access_time_filled, 'Arbeitszeitkonto', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ArbeitszeitkontoScreen()));
-                  }),
-                  _buildDrawerItem(Icons.flight_takeoff, 'Urlaub', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const UrlaubScreen()));
-                  }),
-                  _buildDrawerItem(Icons.local_hospital, 'Krankentage', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const KrankentageScreen()));
-                  }),
-                  _buildDrawerItem(Icons.timer_off, 'Abwesenheit', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AbwesenheitScreen()));
                   }),
                   _buildDrawerItem(Icons.book, 'Wachbuch', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const WachbuchListScreen()));
                   }),
-                  _buildDrawerItem(Icons.calendar_month, 'Meetings', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const MeetingListScreen()));
-                  }),
-                  if (_aclService.hasPermission('Document', 'read'))
-                    _buildDrawerItem(Icons.folder, 'Dokumente', () {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => const DocumentListScreen()));
-                    }),
-                  _buildDrawerItem(Icons.people, 'Kollegen & Mitarbeiter', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AngestellteListScreen()));
-                  }),
-                  if (_aclService.hasPermission('Email', 'read'))
-                    _buildDrawerItem(Icons.email, 'E-Mails', () {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => const EmailListScreen()));
-                    }),
+                  _buildDrawerItem(
+                    Icons.inventory_2_rounded,
+                    'Material & Kleidung (Depot)',
+                    () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const WarehouseHubScreen()));
+                    },
+                  ),
+                  _buildDrawerItem(
+                    Icons.qr_code_scanner,
+                    'QR-Scanner (Ausrüstung & Lager)',
+                    () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const WarehouseScannerScreen()));
+                    },
+                  ),
                   _buildDrawerItem(
                     Icons.chat_rounded,
                     'Chat',
@@ -2154,104 +2888,41 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                           )
                         : null,
                   ),
+                  if (_aclService.hasPermission('Document', 'read'))
+                    _buildDrawerItem(Icons.folder, 'Dokumente', () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const DocumentListScreen()));
+                    }),
+                  if (_aclService.hasPermission('Email', 'read'))
+                    _buildDrawerItem(Icons.email, 'E-Mails', () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const EmailListScreen()));
+                    }),
+                  _buildDrawerItem(Icons.calendar_month, 'Meetings', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const MeetingListScreen()));
+                  }),
+                  _buildDrawerItem(Icons.people, 'Kollegen & Mitarbeiter', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AngestellteListScreen()));
+                  }),
+                  const Divider(color: Colors.white24, height: 16),
+                  _buildDrawerItem(Icons.access_time_filled, 'Arbeitszeitkonto', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ArbeitszeitkontoScreen()));
+                  }),
+                  _buildDrawerItem(Icons.flight_takeoff, 'Urlaub', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const UrlaubScreen()));
+                  }),
+                  _buildDrawerItem(Icons.local_hospital, 'Krankentage', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const KrankentageScreen()));
+                  }),
+                  _buildDrawerItem(Icons.timer_off, 'Abwesenheit', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AbwesenheitScreen()));
+                  }),
                 ],
               ),
             ),
-            const Divider(color: Colors.white30),
-            Consumer<ThemeProvider>(
-              builder: (context, themeProvider, child) {
-                final colors = AppConstants.themes[themeProvider.selectedThemeName] ?? AppConstants.themes['Espo']!;
-                return Column(
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(left: 16, top: 8),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Farbschema', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: AppConstants.themes.keys.map((themeName) {
-                          final themeColors = AppConstants.themes[themeName]!;
-                          final primary = themeColors['primary']!;
-                          final isSelected = themeProvider.selectedThemeName == themeName;
-                          return GestureDetector(
-                            onTap: () => themeProvider.setColorTheme(themeName),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: primary,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: isSelected ? Colors.white : Colors.white24,
-                                  width: isSelected ? 3 : 1,
-                                ),
-                                boxShadow: isSelected ? [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))] : null,
-                              ),
-                              child: isSelected ? const Icon(Icons.check, color: Colors.white, size: 16) : null,
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                    SwitchListTile(
-                      dense: true,
-                      title: const Text('Dark Mode', style: TextStyle(color: Colors.white, fontSize: 14)),
-                      activeColor: colors['secondary'],
-                      value: themeProvider.themeMode == ThemeMode.dark,
-                      onChanged: (value) {
-                        themeProvider.setMode(value ? ThemeMode.dark : ThemeMode.light);
-                      },
-                      secondary: const Icon(Icons.dark_mode, color: Colors.white70),
-                    ),
-                  ],
-                );
-              },
-            ),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.settings, color: Colors.white70, size: 22),
-              title: const Text('Push-Einstellungen', style: TextStyle(color: Colors.white, fontSize: 14)),
-              trailing: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _pushPermission == 'granted' ? Colors.green.withOpacity(0.2) : Colors.amber.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _pushPermission == 'granted' ? 'Aktiv' : 'Einrichten',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: _pushPermission == 'granted' ? Colors.greenAccent : Colors.amberAccent,
-                  ),
-                ),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                PushSettingsSheet.show(context, onTokenSynced: _syncFcmTokenOnStart);
-              },
-            ),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.lock, color: Colors.white70, size: 22),
-              title: const Text('Passwort ändern', style: TextStyle(color: Colors.white, fontSize: 14)),
-              onTap: () {
-                Navigator.pop(context); // close drawer
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const ChangePasswordScreen()));
-              },
-            ),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.logout, color: Colors.white70, size: 22),
-              title: const Text('Abmelden', style: TextStyle(color: Colors.white, fontSize: 14)),
-              onTap: _logout,
-            ),
+            const Divider(color: Colors.white24, height: 16),
+            _buildDrawerItem(Icons.settings_outlined, 'Einstellungen', () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+            }),
+            _buildDrawerItem(Icons.logout, 'Abmelden', _logout),
             const SizedBox(height: 16),
           ],
         ),
@@ -2259,6 +2930,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       body: Column(
         children: [
           _buildBirthdaysWidget(),
+          if (_activeAdminBanner != null)
+            _buildActiveBannerCard(_activeAdminBanner!),
 
           // ─── AKTIONEN: EINSTEMPELN & WACHBUCH (Prominent) ───
           Container(
@@ -2355,112 +3028,71 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
                 final events = snapshot.data ?? [];
 
-                return Column(
-                  children: [
-                    if (!_showSlots && _countSlots > 0)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                        color: Colors.amber.shade900.withOpacity(0.92),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.filter_alt_off, color: Colors.white, size: 20),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Schichten-Filter ist deaktiviert ($_countSlots Schichten vorhanden)',
-                                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                            TextButton(
-                              style: TextButton.styleFrom(
-                                backgroundColor: Colors.white,
-                                foregroundColor: Colors.black87,
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  _showSlots = true;
-                                  if (_persistFilters) _savePreferences();
-                                  _refreshEvents();
-                                });
-                              },
-                              child: const Text('Einblenden', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                            ),
-                          ],
-                        ),
+                return SfCalendar(
+                  view: _calendarView,
+                  controller: _calendarController,
+                  dataSource: EventDataSource(events),
+                  firstDayOfWeek: 1,
+                  timeSlotViewSettings: const TimeSlotViewSettings(
+                    startHour: 5,
+                    endHour: 24,
+                    timeFormat: 'HH:mm',
+                    timeIntervalHeight: 60,
+                  ),
+                  monthViewSettings: const MonthViewSettings(
+                    appointmentDisplayMode: MonthAppointmentDisplayMode.appointment,
+                    appointmentDisplayCount: 3,
+                    monthCellStyle: MonthCellStyle(),
+                    showAgenda: true,
+                    agendaViewHeight: 160,
+                  ),
+                  onTap: (CalendarTapDetails details) {
+                    if (details.appointments != null && details.appointments!.isNotEmpty) {
+                      if (details.targetElement == CalendarElement.appointment) {
+                        final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
+                        _showEventDetails(event);
+                      } else if (details.targetElement == CalendarElement.calendarCell) {
+                        if (details.appointments!.length == 1) {
+                          final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
+                          _showEventDetails(event);
+                        }
+                      }
+                    }
+                  },
+                  appointmentBuilder: (context, calendarAppointmentDetails) {
+                    final ScheduledEvent event = calendarAppointmentDetails.appointments.first;
+                    final isMonthView = _calendarView == CalendarView.month;
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: event.background.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(4),
                       ),
-                    Expanded(
-                      child: SfCalendar(
-                        view: _calendarView,
-                        controller: _calendarController,
-                        dataSource: EventDataSource(events),
-                        firstDayOfWeek: 1,
-                        timeSlotViewSettings: const TimeSlotViewSettings(
-                          startHour: 5,
-                          endHour: 24,
-                          timeFormat: 'HH:mm',
-                          timeIntervalHeight: 60,
-                        ),
-                        monthViewSettings: const MonthViewSettings(
-                          appointmentDisplayMode: MonthAppointmentDisplayMode.appointment,
-                          appointmentDisplayCount: 3,
-                          monthCellStyle: MonthCellStyle(),
-                          showAgenda: true,
-                          agendaViewHeight: 160,
-                        ),
-                        onTap: (CalendarTapDetails details) {
-                          if (details.appointments != null && details.appointments!.isNotEmpty) {
-                            if (details.targetElement == CalendarElement.appointment) {
-                              final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
-                              _showEventDetails(event);
-                            } else if (details.targetElement == CalendarElement.calendarCell) {
-                              if (details.appointments!.length == 1) {
-                                final ScheduledEvent event = details.appointments!.first as ScheduledEvent;
-                                _showEventDetails(event);
-                              }
-                            }
-                          }
-                        },
-                        appointmentBuilder: (context, calendarAppointmentDetails) {
-                          final ScheduledEvent event = calendarAppointmentDetails.appointments.first;
-                          final isMonthView = _calendarView == CalendarView.month;
-                          return Container(
-                            decoration: BoxDecoration(
-                              color: event.background.withOpacity(0.9),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                            child: isMonthView
-                                ? Text(
-                                    event.title,
-                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      child: isMonthView
+                          ? Text(
+                              event.title,
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  event.title,
+                                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                if (event.subtitle != null)
+                                  Text(
+                                    event.subtitle!,
+                                    style: const TextStyle(color: Colors.white70, fontSize: 10),
                                     overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
-                                  )
-                                : Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        event.title,
-                                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      if (event.subtitle != null)
-                                        Text(
-                                          event.subtitle!,
-                                          style: const TextStyle(color: Colors.white70, fontSize: 10),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                    ],
                                   ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+                              ],
+                            ),
+                    );
+                  },
                 );
               },
             ),
