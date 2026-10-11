@@ -110,12 +110,13 @@ class AppUpdateService {
       if (!autoPrompt && context.mounted) {
         final current = await getCurrentAppVersion();
         final currentVer = current['version']?.toString() ?? AppConstants.appVersion;
+        final currentBuild = current['build']?.toString() ?? '${AppConstants.appBuildNumber}';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               kIsWeb 
-                ? 'Ihre Web-App ist auf dem neuesten Stand (v$currentVer)!'
-                : 'Ihre App ist auf dem neuesten Stand (v$currentVer)!',
+                ? 'Ihre Web-App ist auf dem neuesten Stand (v$currentVer+$currentBuild)!'
+                : 'Ihre App ist auf dem neuesten Stand (v$currentVer+$currentBuild)!',
             ),
             backgroundColor: const Color(0xFF10B981),
             duration: const Duration(seconds: 3),

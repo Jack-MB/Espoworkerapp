@@ -216,7 +216,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         : const Icon(Icons.system_update_rounded, color: Colors.purple),
                   ),
                   title: const Text('Auf Updates prüfen', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('Installierte Version: ${AppConstants.appVersion}', style: const TextStyle(fontSize: 12)),
+                  subtitle: Text('Installierte Version: v${AppConstants.appVersion}+${AppConstants.appBuildNumber}', style: const TextStyle(fontSize: 12)),
                   trailing: ElevatedButton(
                     onPressed: _isCheckingUpdate ? null : _triggerUpdateCheck,
                     style: ElevatedButton.styleFrom(
@@ -240,7 +240,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   title: const Text('Build & Umgebung', style: TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Text(
-                    kIsWeb ? 'PWA Web-Client • iOS / Android / Desktop' : 'Android Native APK • MB-SCC Security',
+                    kIsWeb ? 'PWA Web-Client (Build ${AppConstants.appBuildNumber}) • iOS / Android / Desktop' : 'Android Native APK (Build ${AppConstants.appBuildNumber}) • MB-SCC Security',
                     style: const TextStyle(fontSize: 12),
                   ),
                 ),
@@ -263,7 +263,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Mitarbeiter-Portal v${AppConstants.appVersion}',
+                  'Mitarbeiter-Portal v${AppConstants.appVersion}+${AppConstants.appBuildNumber}',
                   style: TextStyle(
                     fontSize: 11,
                     color: isDark ? Colors.white24 : Colors.black26,
