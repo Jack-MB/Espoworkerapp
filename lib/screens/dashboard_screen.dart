@@ -19,6 +19,7 @@ import '../widgets/push_settings_sheet.dart';
 import '../services/app_update_service.dart';
 import 'dart:convert';
 import 'self_checkin_screen.dart';
+import '../services/checkin_state_service.dart';
 import '../services/location_service.dart';
 import 'slots_screen.dart';
 import 'wachbuch_list_screen.dart';
@@ -178,6 +179,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     // Run initialization sequentially to prevent race conditions
     _initializeDashboard();
 
+    // Setup CheckinStateService for seamless synchronicity across all screens
+    CheckinStateService().init();
+    CheckinStateService().addListener(_onCheckinStateChanged);
+
     // Start sync queue for calendar check-ins & Wachbuch notes
     _syncQueue.startPeriodicSync();
     _syncQueue.addListener(_onSyncQueueChanged);
@@ -223,6 +228,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         _loadAdminBanner();
       }
     }
+  }
+
+  void _loadDashboardData() {
+    _refreshEvents();
+    _fetchUnread();
+    _loadLocalCheckins();
   }
 
   Future<void> _loadAdminBanner() async {
@@ -1489,11 +1500,23 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    CheckinStateService().removeListener(_onCheckinStateChanged);
     _syncQueue.removeListener(_onSyncQueueChanged);
     _pollTimer?.cancel();
     _syncQueue.stopPeriodicSync();
     _calendarController.dispose();
     super.dispose();
+  }
+
+  void _onCheckinStateChanged() {
+    if (mounted) {
+      setState(() {
+        _checkedSlotIds = CheckinStateService().checkedInSlotIds.toSet();
+        _checkedSlotOutIds = CheckinStateService().checkedOutSlotIds.toSet();
+        _checkedSlotTimes = Map.from(CheckinStateService().checkedInTimes);
+        _checkedSlotOutTimes = Map.from(CheckinStateService().checkedOutTimes);
+      });
+    }
   }
 
   Future<void> _loadLocalCheckins() async {
@@ -2046,36 +2069,60 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                           Text('Ausgecheckt um $checkOutTime', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.red)),
                         ]),
                       ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        if (!isCheckedIn)
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () async {
-                                Navigator.pop(context);
-                                await _calendarCheckIn(obj);
-                              },
-                              icon: const Icon(Icons.login, size: 18),
-                              label: const Text('Einchecken'),
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                    if (!CheckinStateService().isGloballyEnabled && !AclService().isAdmin) ...[
+                      Container(
+                        margin: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orange.shade300),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 18),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Check-In ist derzeit systemweit deaktiviert.',
+                                style: TextStyle(fontSize: 12, color: Colors.orange, fontWeight: FontWeight.bold),
+                              ),
                             ),
-                          ),
-                        if (isCheckedIn && !isCheckedOut) ...[
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () async {
-                                Navigator.pop(context);
-                                await _calendarCheckOut(obj);
-                              },
-                              icon: const Icon(Icons.logout, size: 18),
-                              label: const Text('Auschecken'),
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700, foregroundColor: Colors.white),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          if (!isCheckedIn)
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  Navigator.pop(context);
+                                  await _calendarCheckIn(obj);
+                                },
+                                icon: const Icon(Icons.login, size: 18),
+                                label: const Text('Einchecken'),
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                              ),
                             ),
-                          ),
+                          if (isCheckedIn && !isCheckedOut) ...[
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  Navigator.pop(context);
+                                  await _calendarCheckOut(obj);
+                                },
+                                icon: const Icon(Icons.logout, size: 18),
+                                label: const Text('Auschecken'),
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700, foregroundColor: Colors.white),
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
-                    ),
+                      ),
+                    ],
                   ],
                 );
               }),
@@ -2137,6 +2184,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   Future<void> _calendarCheckIn(Slot slot) async {
+    if (!CheckinStateService().isGloballyEnabled && !AclService().isAdmin) {
+      _showMsg('Check-In ist derzeit systemweit deaktiviert.', Colors.orange.shade800);
+      return;
+    }
+
     // Day check for workers
     if (!AclService().isAdmin && slot.dateStart != null) {
       try {
@@ -2197,34 +2249,45 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     final now = DateTime.now();
     final timeStr = DateFormat('HH:mm').format(now);
 
-    setState(() {
-      _checkedSlotIds.add(slot.id);
-      _checkedSlotTimes[slot.id] = timeStr;
-    });
-
-    // Persist locally (shared with SlotsScreen)
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('admin_checked_slots', _checkedSlotIds.toList());
-    await prefs.setString('admin_checked_times', json.encode(_checkedSlotTimes));
-
-    // Sync to server
-    _calendarSyncToServer(slot, checkInTime: timeStr);
+    try {
+      await CheckinStateService().performCheckIn(slot);
+      if (mounted) _showMsg('✅ Erfolgreich eingecheckt', Colors.green);
+    } catch (e) {
+      if (e.toString().contains('deaktiviert') || e.toString().contains('Berechtigung')) {
+        if (mounted) _showMsg('Fehler: $e', Colors.red);
+        return;
+      }
+      debugPrint('Calendar checkin error, queueing: $e');
+      final Map<String, dynamic> data = {
+        'checkin': formatLocalToUtcDateTime(localHHmm: timeStr, baseDateUtc: slot.dateStart),
+        'cI': '🟢',
+      };
+      final desc = 'Check-In ${slot.angestellteName ?? slot.name} ($timeStr)';
+      await _syncQueue.enqueue(slotId: slot.id, data: data, description: desc);
+      if (mounted) _showMsg('⏳ Kein Netz – Check-In wird automatisch nachgesendet', Colors.orange.shade800);
+    }
   }
 
   Future<void> _calendarCheckOut(Slot slot) async {
     final now = DateTime.now();
     final timeStr = DateFormat('HH:mm').format(now);
 
-    setState(() {
-      _checkedSlotOutIds.add(slot.id);
-      _checkedSlotOutTimes[slot.id] = timeStr;
-    });
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('admin_checked_out_slots', _checkedSlotOutIds.toList());
-    await prefs.setString('admin_checked_out_times', json.encode(_checkedSlotOutTimes));
-
-    _calendarSyncToServer(slot, checkOutTime: timeStr);
+    try {
+      await CheckinStateService().performCheckOut(slot);
+      if (mounted) _showMsg('✅ Erfolgreich ausgecheckt', Colors.green);
+    } catch (e) {
+      if (e.toString().contains('deaktiviert') || e.toString().contains('Berechtigung')) {
+        if (mounted) _showMsg('Fehler: $e', Colors.red);
+        return;
+      }
+      debugPrint('Calendar checkout error, queueing: $e');
+      final Map<String, dynamic> data = {
+        'checkout': formatLocalToUtcDateTime(localHHmm: timeStr, baseDateUtc: slot.dateEnd ?? slot.dateStart),
+      };
+      final desc = 'Check-Out ${slot.angestellteName ?? slot.name} ($timeStr)';
+      await _syncQueue.enqueue(slotId: slot.id, data: data, description: desc);
+      if (mounted) _showMsg('⏳ Kein Netz – Check-Out wird automatisch nachgesendet', Colors.orange.shade800);
+    }
   }
 
   Future<void> _calendarSyncToServer(Slot slot, {String? checkInTime, String? checkOutTime}) async {
@@ -2239,17 +2302,26 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         try {
           final startDt = espoUtcToLocal(slot.dateStart!);
           final parts = checkInTime.split(':');
-          final checkDt = DateTime(startDt.year, startDt.month, startDt.day, int.parse(parts[0]), int.parse(parts[1]));
-          
-          final diff = startDt.difference(checkDt).inMinutes;
-
-          if (checkDt.isAfter(startDt)) {
-            data['checkinstat'] = '🔴'; // Zu spät
-          } else if (diff <= 30) {
-            data['checkinstat'] = '🟡'; // Knapp (innerhalb von 30 Min vorher)
-          } else {
-            data['checkinstat'] = '🟢'; // Rechtzeitig (mehr als 30 Min vorher)
+          final h = int.parse(parts[0]);
+          final m = int.parse(parts[1]);
+          var checkDt = DateTime(startDt.year, startDt.month, startDt.day, h, m);
+          if (startDt.hour >= 16 && h < 12) {
+            checkDt = checkDt.add(const Duration(days: 1));
+          } else if (startDt.hour < 8 && h >= 18) {
+            checkDt = checkDt.subtract(const Duration(days: 1));
           }
+          final diff = checkDt.difference(startDt).inMinutes;
+
+          String stat = '🟢';
+          if (diff > 0) {
+            stat = '🔴'; // Zu spät
+          } else if (diff > -30) {
+            stat = '🟡'; // Knapp (innerhalb von 30 Min vorher)
+          } else {
+            stat = '🟢'; // Rechtzeitig (mehr als 30 Min vorher)
+          }
+          data['cI'] = stat;
+          data['checkinstat'] = stat;
         } catch (_) {}
       }
     }
@@ -2262,7 +2334,14 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
     if (data.isNotEmpty) {
       try {
-        final success = await _apiService.patchSlot(slot.id, data);
+        bool success = false;
+        if (data.containsKey('checkin')) {
+          success = await _apiService.checkInSlot(slot.id, checkInTime: data['checkin']);
+        } else if (data.containsKey('checkout')) {
+          success = await _apiService.checkOutSlot(slot.id, checkOutTime: data['checkout']);
+        } else {
+          success = await _apiService.patchSlot(slot.id, data);
+        }
         if (success && mounted) {
           _showMsg('✅ Daten an EspoCRM übertragen', Colors.green);
         }
@@ -2844,11 +2923,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   _buildDrawerItem(Icons.dashboard, 'Dashboard', () {
                     // Drawer already pops in _buildDrawerItem, nothing else to do
                   }),
-                  _buildDrawerItem(Icons.touch_app_rounded, 'Einstempeln / Check-In', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const SelfCheckinScreen()));
+                  _buildDrawerItem(Icons.touch_app_rounded, 'Einstempeln / Check-In', () async {
+                    await Navigator.push(context, MaterialPageRoute(builder: (_) => const SelfCheckinScreen()));
+                    _loadDashboardData();
                   }),
-                  _buildDrawerItem(Icons.calendar_today, 'Schichten / Dienstplan', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const SlotsScreen()));
+                  _buildDrawerItem(Icons.calendar_today, 'Schichten / Dienstplan', () async {
+                    await Navigator.push(context, MaterialPageRoute(builder: (_) => const SlotsScreen()));
+                    _loadDashboardData();
                   }),
                   _buildDrawerItem(Icons.book, 'Wachbuch', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const WachbuchListScreen()));
@@ -2948,8 +3029,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => const SelfCheckinScreen()));
+                    onPressed: () async {
+                      await Navigator.push(context, MaterialPageRoute(builder: (_) => const SelfCheckinScreen()));
+                      _loadDashboardData();
                     },
                     icon: const Icon(Icons.touch_app_rounded, size: 22),
                     label: const Text('Einstempeln', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),

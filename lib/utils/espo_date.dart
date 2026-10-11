@@ -17,7 +17,12 @@ DateTime espoUtcToLocal(String s) {
     return _espoFormat.parseUtc(clean).toLocal();
   } catch (_) {
     try {
-      return DateTime.parse(s).toLocal();
+      var clean = s.trim();
+      if (!clean.contains('T')) clean = clean.replaceFirst(' ', 'T');
+      if (!clean.endsWith('Z') && !clean.contains('+') && !(clean.lastIndexOf('-') > 10)) {
+        clean = '${clean}Z';
+      }
+      return DateTime.parse(clean).toLocal();
     } catch (_) {
       return DateTime.now();
     }
@@ -80,6 +85,7 @@ String? formatUtcToLocalTime(String? s) {
 
 /// Konvertiert eine lokale Uhrzeit "HH:mm" für ein gegebenes Schichtdatum
 /// in einen UTC-Datetime-String "yyyy-MM-dd HH:mm:ss" für EspoCRM.
+/// Erkennt und korrigiert automatisch Mitternachts-Übertritte bei Nachtschichten.
 String? formatLocalToUtcDateTime({
   required String localHHmm,
   String? baseDateUtc,
@@ -87,26 +93,43 @@ String? formatLocalToUtcDateTime({
   if (localHHmm.trim().isEmpty) return null;
   try {
     DateTime localDate;
-    if (baseDateUtc != null && baseDateUtc.trim().isNotEmpty) {
-      localDate = espoUtcToLocal(baseDateUtc);
-    } else {
-      localDate = DateTime.now();
-    }
-
     final parts = localHHmm.trim().split(':');
     final hour = int.parse(parts[0]);
     final minute = parts.length > 1 ? int.parse(parts[1]) : 0;
 
-    final localDateTime = DateTime(
-      localDate.year,
-      localDate.month,
-      localDate.day,
-      hour,
-      minute,
-      0,
-    );
+    if (baseDateUtc != null && baseDateUtc.trim().isNotEmpty) {
+      final baseLocal = espoUtcToLocal(baseDateUtc);
+      localDate = DateTime(
+        baseLocal.year,
+        baseLocal.month,
+        baseLocal.day,
+        hour,
+        minute,
+        0,
+      );
+      // Wenn die Schicht am Vorabend begann (z. B. ab 16:00 Uhr) und die eingegebene Uhrzeit
+      // am Morgen liegt (z. B. < 12:00 Uhr), hat die Schicht Mitternacht überschritten -> Folgetag!
+      if (baseLocal.hour >= 16 && hour < 12) {
+        localDate = localDate.add(const Duration(days: 1));
+      }
+      // Wenn die Schicht am frühen Morgen begann (z. B. 01:00 Uhr) und die Zeit am Vorabend lag
+      // (z. B. Checkin 23:50 Uhr am Vortag), 1 Tag abziehen
+      else if (baseLocal.hour < 8 && hour >= 18) {
+        localDate = localDate.subtract(const Duration(days: 1));
+      }
+    } else {
+      final now = DateTime.now();
+      localDate = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        hour,
+        minute,
+        0,
+      );
+    }
 
-    return _espoFormat.format(localDateTime.toUtc());
+    return _espoFormat.format(localDate.toUtc());
   } catch (e) {
     return null;
   }
@@ -127,7 +150,12 @@ bool isSlotOnLocalDate(String? dateStartUtc, String? dateEndUtc, DateTime localT
     final targetDay = localTargetDate.day;
 
     final startDay = DateTime(startLocal.year, startLocal.month, startLocal.day);
-    final endDay = DateTime(endLocal.year, endLocal.month, endLocal.day);
+    // Wenn die Schicht exakt um 00:00:00 des Folgetags endet, gehört dieser Tag nicht mehr
+    // zur Schicht (da sie vor Arbeitsbeginn dieses Tages beendet war).
+    final effectiveEnd = (endLocal.hour == 0 && endLocal.minute == 0 && endLocal.second == 0 && endLocal.isAfter(startLocal))
+        ? endLocal.subtract(const Duration(seconds: 1))
+        : endLocal;
+    final endDay = DateTime(effectiveEnd.year, effectiveEnd.month, effectiveEnd.day);
     final targetDayDate = DateTime(targetYear, targetMonth, targetDay);
 
     return (targetDayDate.isAtSameMomentAs(startDay) || targetDayDate.isAfter(startDay)) &&

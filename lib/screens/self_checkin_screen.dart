@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:async';
 import '../models/slot.dart';
 import '../services/api_service.dart';
 import '../services/acl_service.dart';
 import '../services/secure_storage_service.dart';
+import '../services/checkin_state_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_queue_service.dart';
 import '../core/constants.dart';
@@ -23,7 +25,7 @@ class SelfCheckinScreen extends StatefulWidget {
   State<SelfCheckinScreen> createState() => _SelfCheckinScreenState();
 }
 
-class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
+class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindingObserver {
   final ApiService _api = ApiService();
   final AclService _acl = AclService();
   final LocationService _location = LocationService();
@@ -32,6 +34,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
 
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchCtrl = TextEditingController();
+
+  Timer? _autoRefreshTimer;
 
   List<Slot> _allRelevantSlots = [];
   bool _isLoading = true;
@@ -58,6 +62,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _acl.refresh();
     _searchCtrl.addListener(() {
       if (mounted) {
@@ -66,11 +71,46 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
         });
       }
     });
+    CheckinStateService().init();
+    CheckinStateService().addListener(_onCheckinStateChanged);
     _initAndLoad();
+    _startAutoRefresh();
+  }
+
+  void _onCheckinStateChanged() {
+    if (mounted) {
+      setState(() {
+        _checkedIn = CheckinStateService().checkedInSlotIds.toSet();
+        _checkedOut = CheckinStateService().checkedOutSlotIds.toSet();
+        _checkedTimes = Map.from(CheckinStateService().checkedInTimes);
+        _checkedOutTimes = Map.from(CheckinStateService().checkedOutTimes);
+      });
+    }
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      if (mounted && !_isProcessing) {
+        _loadTodaysSlots(silent: true);
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (mounted && !_isProcessing) {
+        _loadTodaysSlots(silent: true);
+      }
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    CheckinStateService().removeListener(_onCheckinStateChanged);
+    _autoRefreshTimer?.cancel();
     _scrollController.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -117,13 +157,13 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
 
   /// Lädt die heutigen Schichten. Wenn bereits Schichten vorhanden sind,
   /// wird die Liste im Hintergrund aktualisiert, um die Scrollposition nicht zu verlieren.
-  Future<void> _loadTodaysSlots() async {
+  Future<void> _loadTodaysSlots({bool silent = false}) async {
     if (_allRelevantSlots.isEmpty) {
       setState(() {
         _isLoading = true;
         _errorMessage = null;
       });
-    } else {
+    } else if (!silent) {
       setState(() {
         _isRefreshing = true;
       });
@@ -131,22 +171,22 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
 
     try {
       final now = DateTime.now();
-      final todayStr = DateFormat('yyyy-MM-dd').format(now);
 
       // Puffer für Nachtschichten: Gestern Mittag bis morgen Mittag
-      final allSlots = await _api.getSlots(
+      // getCheckinSlots holt für Einsatzleiter automatisch auch die Team-Schichten!
+      final allSlots = await _api.getCheckinSlots(
         startDate: now.subtract(const Duration(days: 1)),
         endDate: now.add(const Duration(days: 1)),
       );
 
       // Schichten filtern:
       // - Eigene Schichten (angestellteId == currentAngestellteId)
-      // - Schichten als Einsatzleiter (einsatzleiterId == currentAngestellteId)
+      // - Schichten als Einsatzleiter (einsatzleiterId == currentAngestellteId oder canEditOnr)
       // - Alle Schichten (bei Admin)
       final relevantSlots = allSlots.where((s) {
         if (!_acl.isAdmin && _currentAngestellteId != null) {
           final isMySlot = s.angestellteId == _currentAngestellteId;
-          final isMyElSlot = s.isEinsatzleiter(_currentAngestellteId);
+          final isMyElSlot = s.isEinsatzleiter(_currentAngestellteId) || (s.canEditOnr == true);
           if (!isMySlot && !isMyElSlot) {
             return false;
           }
@@ -161,6 +201,9 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
 
       // Backend-Werte in lokale Ampel-Map übernehmen
       for (final s in relevantSlots) {
+        if (s.cI != null && s.cI!.isNotEmpty) {
+          _slotAmpeln[s.id] = s.cI!;
+        }
         if (s.checkin != null && s.checkin!.isNotEmpty) {
           _checkedIn.add(s.id);
           final localIn = formatUtcToLocalTime(s.checkin);
@@ -176,6 +219,9 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
           }
         }
       }
+
+      CheckinStateService().syncSlotsFromServer(relevantSlots);
+      await CheckinStateService().refreshGlobalConfig();
 
       if (!mounted) return;
       setState(() {
@@ -198,7 +244,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
   bool get _hasSupervisorCapabilities {
     if (_acl.isAdmin) return true;
     if (_currentAngestellteId == null) return false;
-    return _allRelevantSlots.any((s) => s.isEinsatzleiter(_currentAngestellteId));
+    return _allRelevantSlots.any((s) => s.isEinsatzleiter(_currentAngestellteId) || (s.canEditOnr == true));
   }
 
   List<Slot> get _displayedSlots {
@@ -217,7 +263,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
         if (_acl.isAdmin) {
           baseList = _allRelevantSlots;
         } else {
-          baseList = _allRelevantSlots.where((s) => s.isEinsatzleiter(_currentAngestellteId)).toList();
+          baseList = _allRelevantSlots.where((s) => s.isEinsatzleiter(_currentAngestellteId) || (s.canEditOnr == true)).toList();
         }
       }
     }
@@ -229,32 +275,53 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
       final objMatch = s.objekteName?.toLowerCase().contains(_searchQuery) ?? false;
       final empMatch = s.angestellteName?.toLowerCase().contains(_searchQuery) ?? false;
       final posMatch = s.positionsname?.toLowerCase().contains(_searchQuery) ?? false;
-      return nameMatch || objMatch || empMatch || posMatch;
+      final onrMatch = s.oNr?.toLowerCase().contains(_searchQuery) ?? false;
+      return nameMatch || objMatch || empMatch || posMatch || onrMatch;
     }).toList();
   }
 
   int get _mySlotsCount => _allRelevantSlots.where((s) => s.angestellteId == _currentAngestellteId).length;
   int get _teamSlotsCount => _acl.isAdmin
       ? _allRelevantSlots.length
-      : _allRelevantSlots.where((s) => s.isEinsatzleiter(_currentAngestellteId)).length;
+      : _allRelevantSlots.where((s) => s.isEinsatzleiter(_currentAngestellteId) || (s.canEditOnr == true)).length;
 
-  Future<void> _doCheckIn(Slot slot) async {
+  Future<void> _doCheckIn(Slot slot, {String? oNr}) async {
     if (_isProcessing) return;
+
+    if (!CheckinStateService().isGloballyEnabled && !_acl.isAdmin) {
+      _showErrorSnackbar('Check-In ist derzeit systemweit deaktiviert.');
+      return;
+    }
+
+    // Wenn der Nutzer Einsatzleiter ist und für ein Teammitglied eincheckt,
+    // bieten wir (wie im Terminal) ein modales Fenster zur Eingabe / Bestätigung der Ordnernummer an:
+    final canEdit = slot.canUserEditOnr(_currentAngestellteId, isAdmin: _acl.isAdmin);
+    final isTeamMember = slot.angestellteId != _currentAngestellteId;
+
+    if (canEdit && isTeamMember && oNr == null) {
+      final chosenOnr = await _showCheckinDialog(slot);
+      if (chosenOnr == null) {
+        // Abbruch durch Einsatzleiter
+        return;
+      }
+      oNr = chosenOnr;
+    }
+
     setState(() => _processingSlotId = slot.id);
 
     // 1. GPS Geofence Check über zentralen LocationService
     final gpsResult = await _location.checkGeofence(slot);
     if (!gpsResult.isSuccess) {
       if (mounted) setState(() => _processingSlotId = null);
-      _showGpsErrorDialog(gpsResult, slot, isCheckIn: true);
+      _showGpsErrorDialog(gpsResult, slot, isCheckIn: true, oNr: oNr);
       return;
     }
 
-    await _executeCheckIn(slot);
+    await _executeCheckIn(slot, oNr: oNr);
   }
 
   /// Führt den tatsächlichen Check-In aus (nach GPS-Bestätigung oder Admin-Freigabe)
-  Future<void> _executeCheckIn(Slot slot) async {
+  Future<void> _executeCheckIn(Slot slot, {String? oNr}) async {
     setState(() => _processingSlotId = slot.id);
 
     final now = DateTime.now();
@@ -281,47 +348,45 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
     }
 
     try {
-      await _api.checkInSlot(slot.id, checkInTime: nowUtcStr);
+      final res = await CheckinStateService().performCheckIn(
+        slot,
+        oNr: oNr,
+        customTimeUtc: nowUtcStr,
+      );
+
+      final isOffline = res['offline'] == true;
+      final timeStr = res['time'] as String? ?? nowHHMM;
+      final ampelRes = res['ampel'] as String? ?? ampel;
+
       if (mounted) {
         setState(() {
           _checkedIn.add(slot.id);
-          _checkedTimes[slot.id] = nowHHMM;
-          _slotAmpeln[slot.id] = ampel;
+          _checkedTimes[slot.id] = timeStr;
+          _slotAmpeln[slot.id] = ampelRes;
+          if (oNr != null) {
+            final idx = _allRelevantSlots.indexWhere((s) => s.id == slot.id);
+            if (idx != -1) {
+              _allRelevantSlots[idx] = _allRelevantSlots[idx].copyWith(
+                oNr: oNr.isNotEmpty ? oNr : null,
+              );
+            }
+          }
         });
-        final targetName = slot.angestellteName != null ? ' (${slot.angestellteName})' : '';
-        _showSuccessSnackbar('✅ Eingecheckt um $nowHHMM Uhr ($ampel)$targetName');
+        if (isOffline) {
+          _showSuccessSnackbar('✅ Vor Ort eingecheckt! (Offline gespeichert – synchronisiert automatisch)');
+        } else {
+          final targetName = slot.angestellteName != null ? ' (${slot.angestellteName})' : '';
+          final onrSuffix = (oNr != null && oNr.isNotEmpty) ? ' [Ordner #$oNr]' : '';
+          _showSuccessSnackbar('✅ Eingecheckt um $timeStr Uhr ($ampelRes)$targetName$onrSuffix');
+        }
       }
     } catch (e) {
       final errStr = e.toString();
-      if (errStr.contains('Berechtigung') || errStr.contains('deaktiviert') || errStr.contains('Forbidden') || errStr.contains('403')) {
-        if (mounted) {
-          _showErrorSnackbar('❌ Check-In abgelehnt: $errStr');
-        }
-      } else {
-        debugPrint('SelfCheckin: Netzwerkfehler bei checkInSlot, reihe in SyncQueue ein: $e');
-        final offlinePayload = {
-          'checkin': nowUtcStr,
-          'cI': ampel,
-          'status': 'Durchgeführt',
-        };
-        await _syncQueue.enqueue(
-          slotId: slot.id,
-          data: offlinePayload,
-          description: 'Check-In ${slot.name} ($nowHHMM)',
-        );
-
-        if (mounted) {
-          setState(() {
-            _checkedIn.add(slot.id);
-            _checkedTimes[slot.id] = nowHHMM;
-            _slotAmpeln[slot.id] = ampel;
-          });
-          _showSuccessSnackbar('✅ Vor Ort eingecheckt! (Offline gespeichert – synchronisiert automatisch)');
-        }
+      if (mounted) {
+        _showErrorSnackbar('❌ Check-In abgelehnt / fehlgeschlagen: $errStr');
       }
     }
 
-    await _saveLocalState();
     if (mounted) setState(() => _processingSlotId = null);
   }
 
@@ -383,48 +448,37 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
     HapticFeedback.heavyImpact();
 
     try {
-      await _api.checkOutSlot(slot.id, checkOutTime: nowUtcStr);
+      final res = await CheckinStateService().performCheckOut(
+        slot,
+        customTimeUtc: nowUtcStr,
+      );
+
+      final isOffline = res['offline'] == true;
+      final timeStr = res['time'] as String? ?? nowHHMM;
+
       if (mounted) {
         setState(() {
           _checkedOut.add(slot.id);
-          _checkedOutTimes[slot.id] = nowHHMM;
+          _checkedOutTimes[slot.id] = timeStr;
         });
         final targetName = slot.angestellteName != null ? ' (${slot.angestellteName})' : '';
-        _showSuccessSnackbar('👋 Ausgecheckt um $nowHHMM Uhr$targetName');
+        if (isOffline) {
+          _showSuccessSnackbar('👋 Ausgecheckt! (Offline gespeichert – synchronisiert automatisch)');
+        } else {
+          _showSuccessSnackbar('👋 Ausgecheckt um $timeStr Uhr$targetName');
+        }
       }
     } catch (e) {
       final errStr = e.toString();
-      if (errStr.contains('Berechtigung') || errStr.contains('deaktiviert') || errStr.contains('Forbidden') || errStr.contains('403')) {
-        if (mounted) {
-          _showErrorSnackbar('❌ Check-Out abgelehnt: $errStr');
-        }
-      } else {
-        debugPrint('SelfCheckin: Netzwerkfehler bei checkOutSlot, reihe in SyncQueue ein: $e');
-        final offlinePayload = {
-          'checkout': nowUtcStr,
-          'status': 'Durchgeführt',
-        };
-        await _syncQueue.enqueue(
-          slotId: slot.id,
-          data: offlinePayload,
-          description: 'Check-Out ${slot.name} ($nowHHMM)',
-        );
-
-        if (mounted) {
-          setState(() {
-            _checkedOut.add(slot.id);
-            _checkedOutTimes[slot.id] = nowHHMM;
-          });
-          _showSuccessSnackbar('👋 Ausgecheckt! (Offline gespeichert – synchronisiert automatisch)');
-        }
+      if (mounted) {
+        _showErrorSnackbar('❌ Check-Out abgelehnt / fehlgeschlagen: $errStr');
       }
     }
 
-    await _saveLocalState();
     if (mounted) setState(() => _processingSlotId = null);
   }
 
-  void _showGpsErrorDialog(GpsCheckResult result, Slot slot, {required bool isCheckIn}) {
+  void _showGpsErrorDialog(GpsCheckResult result, Slot slot, {required bool isCheckIn, String? oNr}) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -512,7 +566,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
               onPressed: () {
                 Navigator.pop(ctx);
                 if (isCheckIn) {
-                  _executeCheckIn(slot);
+                  _executeCheckIn(slot, oNr: oNr);
                 } else {
                   _executeCheckOut(slot);
                 }
@@ -530,6 +584,319 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
             child: const Text('Verstanden'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Öffnet ein modales Sheet (Terminal-Style) zur Eingabe / Bestätigung der Ordnernummer beim Team-Check-In
+  Future<String?> _showCheckinDialog(Slot slot) async {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final initialOnr = slot.oNr ?? slot.empDefaultOnr ?? '';
+    final ctrl = TextEditingController(text: initialOnr);
+
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(ctx).viewInsets.bottom,
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E293B) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: Colors.green.withOpacity(0.15),
+                    child: const Icon(Icons.how_to_reg, color: Colors.green, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Team-Check-In',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                        Text(
+                          slot.angestellteName != null && slot.angestellteName!.isNotEmpty
+                              ? slot.angestellteName!
+                              : slot.name,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (slot.objekteName != null) ...[
+                Row(
+                  children: [
+                    Icon(Icons.location_on, size: 14, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        slot.objekteName!,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: isDark ? Colors.white70 : Colors.black87,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+              ],
+              Text(
+                'Ordnernummer (optional)',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'z. B. 42 oder 0071 (optional)',
+                  helperText: 'Orientiert am Check-In Terminal. Freilassen falls nicht benötigt.',
+                  prefixIcon: const Icon(Icons.folder_shared_outlined, size: 20),
+                  filled: true,
+                  fillColor: isDark ? Colors.white10 : Colors.grey.shade50,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, null),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: const Text('Abbrechen'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+                      icon: const Icon(Icons.check_circle, size: 18),
+                      label: const Text('Einchecken', style: TextStyle(fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Dialog zum direkten Festlegen / Ändern der Ordnernummer durch den Einsatzleiter oder Admin
+  Future<void> _showEditOnrDialog(Slot slot) async {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final initialOnr = slot.oNr ?? slot.empDefaultOnr ?? '';
+    final ctrl = TextEditingController(text: initialOnr);
+
+    final newOnr = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.folder_shared_outlined, color: Colors.purple),
+            SizedBox(width: 8),
+            Text('Ordnernummer festlegen', style: TextStyle(fontSize: 16)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Für: ${slot.angestellteName != null && slot.angestellteName!.isNotEmpty ? slot.angestellteName! : slot.name}',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Ordnernummer (optional)',
+                hintText: 'z. B. 42 oder 0071',
+                helperText: 'Freilassen, um die Ordnernummer zu entfernen.',
+                prefixIcon: const Icon(Icons.badge, size: 18),
+                filled: true,
+                fillColor: isDark ? Colors.white10 : Colors.grey.shade50,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Abbrechen'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: AppConstants.primaryColor, foregroundColor: Colors.white),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+
+    if (newOnr == null) return;
+
+    try {
+      final success = await CheckinStateService().updateOrdnerNummer(slot.id, newOnr.isNotEmpty ? newOnr : null);
+      if (success) {
+        if (!mounted) return;
+        setState(() {
+          final idx = _allRelevantSlots.indexWhere((s) => s.id == slot.id);
+          if (idx != -1) {
+            _allRelevantSlots[idx] = _allRelevantSlots[idx].copyWith(
+              oNr: newOnr.isNotEmpty ? newOnr : null,
+            );
+          }
+        });
+        _showSuccessSnackbar(newOnr.isNotEmpty ? '✅ Ordnernummer #$newOnr gespeichert' : '✅ Ordnernummer entfernt');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorSnackbar('❌ Fehler beim Speichern: $e');
+    }
+  }
+
+  Widget _buildOrdnerNummerChip(Slot slot, bool isDark) {
+    final canEdit = slot.canUserEditOnr(_currentAngestellteId, isAdmin: _acl.isAdmin);
+    final hasOnr = slot.oNr != null && slot.oNr!.trim().isNotEmpty;
+
+    if (!hasOnr && !canEdit) {
+      // Normaler Mitarbeiter ohne Ordnernummer: Nichts anzeigen
+      return const SizedBox.shrink();
+    }
+
+    if (hasOnr) {
+      return InkWell(
+        onTap: canEdit ? () => _showEditOnrDialog(slot) : null,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: isDark ? Colors.purple.shade900.withOpacity(0.35) : Colors.purple.shade50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isDark ? Colors.purpleAccent.shade100.withOpacity(0.5) : Colors.purple.shade300,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.folder_shared_outlined,
+                size: 13,
+                color: isDark ? Colors.purpleAccent : Colors.purple.shade700,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'Ordner #${slot.oNr}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.purpleAccent : Colors.purple.shade800,
+                ),
+              ),
+              if (canEdit) ...[
+                const SizedBox(width: 3),
+                Icon(
+                  Icons.edit,
+                  size: 10,
+                  color: isDark ? Colors.purpleAccent.withOpacity(0.7) : Colors.purple.shade400,
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Kein Onr, aber darf editieren (Einsatzleiter / Admin)
+    return InkWell(
+      onTap: () => _showEditOnrDialog(slot),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.grey.withOpacity(0.4),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add, size: 12, color: isDark ? Colors.white60 : Colors.grey.shade600),
+            const SizedBox(width: 3),
+            Text(
+              'Ordner-Nr.',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white60 : Colors.grey.shade700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -620,6 +987,30 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
               ],
             ),
           ),
+
+          // Global Check-In Deaktiviert Banner (falls in EspoCRM deaktiviert)
+          if (!CheckinStateService().isGloballyEnabled && !_acl.isAdmin)
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange.shade400),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 22),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Check-In ist derzeit systemweit pausiert oder deaktiviert.',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.orange),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // Umschalter für Einsatzleiter & Admins
           if (_hasSupervisorCapabilities) ...[
@@ -900,7 +1291,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
               ),
             ],
 
-            // Status-Badge & Zeit
+            // Status-Badge, Ordnernummer & Zeit
             Row(
               children: [
                 Container(
@@ -915,6 +1306,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                     style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold),
                   ),
                 ),
+                const SizedBox(width: 8),
+                _buildOrdnerNummerChip(slot, isDark),
                 const Spacer(),
                 if (startStr != null)
                   Container(
@@ -1011,26 +1404,41 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> {
                   Expanded(
                     child: SizedBox(
                       height: 46,
-                      child: ElevatedButton.icon(
-                        icon: isThisSlotProcessing
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(Icons.login, size: 20),
-                        label: Text(
-                          isThisSlotProcessing ? 'Wird geprüft...' : 'Vor Ort Einchecken',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green.shade600,
-                          foregroundColor: Colors.white,
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                        onPressed: _isProcessing ? null : () => _doCheckIn(slot),
-                      ),
+                      child: (!CheckinStateService().isGloballyEnabled && !_acl.isAdmin)
+                          ? ElevatedButton.icon(
+                              icon: const Icon(Icons.block, size: 20),
+                              label: const Text(
+                                'Check-In deaktiviert',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: isDark ? Colors.white12 : Colors.grey.shade400,
+                                foregroundColor: isDark ? Colors.white38 : Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: null,
+                            )
+                          : ElevatedButton.icon(
+                              icon: isThisSlotProcessing
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.login, size: 20),
+                              label: Text(
+                                isThisSlotProcessing ? 'Wird geprüft...' : 'Vor Ort Einchecken',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade600,
+                                foregroundColor: Colors.white,
+                                elevation: 2,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: _isProcessing ? null : () => _doCheckIn(slot),
+                            ),
                     ),
                   ),
                 if (isIn && !isOut) ...[

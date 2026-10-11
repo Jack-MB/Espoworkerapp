@@ -329,16 +329,17 @@ class ApiService {
     return true;
   }
 
-  /// Check-in für eine Schicht über dedizierte Server-Action mit Ampel-Berechnung
-  Future<bool> checkInSlot(String slotId, {String? checkInTime}) async {
+  /// Check-in für eine Schicht über dedizierte Server-Action mit Ampel-Berechnung & optionaler Ordnernummer
+  Future<bool> checkInSlot(String slotId, {String? checkInTime, String? oNr}) async {
     final primaryUrl = Uri.parse('${ServerConfig().apiUrl}/Slots/action/checkin');
     try {
       final headers = await _getHeaders();
-      final body = json.encode({
+      final bodyMap = <String, dynamic>{
         'slotId': slotId,
         if (checkInTime != null) 'checkin': checkInTime,
-      });
-      final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: body);
+        if (oNr != null) 'oNr': oNr,
+      };
+      final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: json.encode(bodyMap));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) return true;
@@ -357,11 +358,70 @@ class ApiService {
 
     // Fallback: direct patchSlot (Admin / Legacy)
     final checkinVal = checkInTime ?? DateTime.now().toUtc().toString().split('.')[0];
-    return patchSlot(slotId, {
+    final patchData = <String, dynamic>{
       'checkin': checkinVal,
       'cI': '🟢',
       'status': 'Durchgeführt',
+      if (oNr != null) 'oNr': oNr,
+    };
+    return patchSlot(slotId, patchData);
+  }
+
+  /// Aktualisiert die Ordnernummer für eine Schicht (nur Einsatzleiter / Admin).
+  Future<bool> updateOrdnerNummer(String slotId, String? oNr) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/action/updateOrdnerNummer');
+    final headers = await _getHeaders();
+    final body = json.encode({
+      'slotId': slotId,
+      'oNr': oNr,
     });
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return data['success'] == true;
+    }
+    if (response.statusCode == 403) {
+      final data = json.decode(response.body);
+      throw Exception(data['message'] ?? 'Nur der Einsatzleiter darf Ordnernummern ändern.');
+    }
+    throw Exception('Fehler beim Aktualisieren der Ordnernummer: ${response.statusCode}');
+  }
+
+  /// Lädt Schichten speziell für den Check-in Bereich:
+  /// Liefert eigene Schichten des Nutzers PLUS alle Schichten, bei denen er Einsatzleiter ist!
+  Future<List<Slot>> getCheckinSlots({DateTime? startDate, DateTime? endDate}) async {
+    final start = startDate ?? DateTime.now().subtract(const Duration(days: 1));
+    final end = endDate ?? DateTime.now().add(const Duration(days: 1));
+
+    final startStr = '${start.year.toString().padLeft(4, '0')}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')} 00:00:00';
+    final endStr = '${end.year.toString().padLeft(4, '0')}-${end.month.toString().padLeft(2, '0')}-${end.day.toString().padLeft(2, '0')} 23:59:59';
+
+    final baseUri = Uri.parse(ServerConfig().apiUrl);
+    final url = Uri(
+      scheme: baseUri.scheme,
+      host: baseUri.host,
+      port: baseUri.hasPort ? baseUri.port : null,
+      path: '${baseUri.path}/Slots/action/checkinSlots',
+      queryParameters: {
+        'startDate': startStr,
+        'endDate': endStr,
+      },
+    );
+
+    try {
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          return (data['list'] as List).map((e) => Slot.fromJson(e as Map<String, dynamic>)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('getCheckinSlots endpoint failed: $e, falling back to getSlots');
+    }
+
+    // Fallback auf Standard getSlots
+    return getSlots(startDate: start, endDate: end);
   }
 
   /// Check-out für eine Schicht über dedizierte Server-Action
@@ -2227,6 +2287,22 @@ class ApiService {
       }
     } catch (_) {}
     return true;
+  }
+
+  /// Speichert die systemweite Check-in Konfiguration (nur Admins).
+  Future<bool> setCheckinConfig(bool enabled) async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Slots/action/setCheckinConfig');
+      final body = json.encode({'checkinCheckoutEnabled': enabled});
+      final response = await _HttpWithTimeout.post(url, headers: await _getHeaders(), body: body);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['checkinCheckoutEnabled'] == true;
+      }
+    } catch (e) {
+      debugPrint('setCheckinConfig error: $e');
+    }
+    return false;
   }
 
   // ── Stored Employee Name ───────────────────────────────────────────────────

@@ -97,5 +97,36 @@ void main() {
       final expectedDt = DateTime.utc(2026, 9, 19, 22, 0, 0).toLocal();
       expect(d2.day, equals(expectedDt.day));
     });
+
+    test('formatLocalToUtcDateTime handles overnight shift crossing midnight', () {
+      // Shift starts at 22:00 local time on Sep 19 (e.g. 20:00 UTC)
+      final baseDateUtc = '2026-09-19 20:00:00';
+      // Worker checks out at 06:00 in the morning on Sep 20
+      final checkoutLocal = '06:00';
+
+      final utcFormatted = formatLocalToUtcDateTime(
+        localHHmm: checkoutLocal,
+        baseDateUtc: baseDateUtc,
+      );
+      expect(utcFormatted, isNotNull);
+
+      // In local time, checkout should be on Sep 20 at 06:00
+      final localBack = espoUtcToLocal(utcFormatted!);
+      expect(localBack.day, equals(20));
+      expect(localBack.hour, equals(6));
+      expect(localBack.minute, equals(0));
+    });
+
+    test('isSlotOnLocalDate ignores shifts ending at exact midnight of next day', () {
+      // Shift from 18:00 to 00:00 on Sep 19 local time (e.g. 16:00 to 22:00 UTC)
+      // Or in UTC: 2026-09-19 16:00:00 to 2026-09-19 22:00:00 (which is 00:00 CEST on Sep 20)
+      final startUtc = '2026-09-19 16:00:00';
+      final endUtc = '2026-09-19 22:00:00'; // local 00:00 on Sep 20
+
+      // Active on Sep 19
+      expect(isSlotOnLocalDate(startUtc, endUtc, DateTime(2026, 9, 19)), isTrue);
+      // But NOT active on Sep 20 because it ended at midnight sharp before work on Sep 20
+      expect(isSlotOnLocalDate(startUtc, endUtc, DateTime(2026, 9, 20)), isFalse);
+    });
   });
 }

@@ -4,8 +4,8 @@ class AppConstants {
   // Server URL is now managed dynamically via ServerConfig
 
   // App Version
-  static const String appVersion = '1.3.14';
-  static const int appBuildNumber = 38;
+  static const String appVersion = '1.3.15';
+  static const int appBuildNumber = 39;
 
   // EspoCRM primary color hints (Slate / Dark Blue)
   static const Color primaryColor = Color(0xFF173D5D); // Espresso Dark Blue / Slate

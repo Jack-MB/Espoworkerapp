@@ -9,6 +9,7 @@ import '../services/api_service.dart';
 import '../services/sync_queue_service.dart';
 import '../models/slot.dart';
 import '../services/acl_service.dart';
+import '../services/checkin_state_service.dart';
 import '../utils/espo_date.dart';
 
 class SlotsScreen extends StatefulWidget {
@@ -59,6 +60,9 @@ class _SlotsScreenState extends State<SlotsScreen> {
   void initState() {
     super.initState();
     
+    CheckinStateService().init();
+    CheckinStateService().addListener(_onCheckinStateChanged);
+
     // Sequential initialization to prevent UI race conditions
     _initializeApp();
     
@@ -75,6 +79,17 @@ class _SlotsScreenState extends State<SlotsScreen> {
     _deltaSyncTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       if (mounted) _refreshDelta();
     });
+  }
+
+  void _onCheckinStateChanged() {
+    if (mounted) {
+      setState(() {
+        _checkedSlotIds = CheckinStateService().checkedInSlotIds.toSet();
+        _checkedSlotTimes = Map.from(CheckinStateService().checkedInTimes);
+        _checkedSlotOutIds = CheckinStateService().checkedOutSlotIds.toSet();
+        _checkedSlotOutTimes = Map.from(CheckinStateService().checkedOutTimes);
+      });
+    }
   }
 
   Future<void> _initializeApp() async {
@@ -94,6 +109,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
   @override
   void dispose() {
+    CheckinStateService().removeListener(_onCheckinStateChanged);
     _deltaSyncTimer?.cancel();
     _syncQueue.stopPeriodicSync();
     super.dispose();
@@ -318,6 +334,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
           }
         }
       }
+      CheckinStateService().syncSlotsFromServer(slots);
       _lastSyncTime = DateTime.now().toUtc();
     });
     _applyFilters();
@@ -351,6 +368,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
           }
         }
       }
+      CheckinStateService().syncSlotsFromServer(deltaSlots);
 
       if (mounted) {
         setState(() {
@@ -710,7 +728,14 @@ class _SlotsScreenState extends State<SlotsScreen> {
           try {
             final startDt = espoUtcToLocal(slot.dateStart!);
             final parts = checkInTime.split(':');
-            final checkDt = DateTime(startDt.year, startDt.month, startDt.day, int.parse(parts[0]), int.parse(parts[1]));
+            final h = int.parse(parts[0]);
+            final m = int.parse(parts[1]);
+            var checkDt = DateTime(startDt.year, startDt.month, startDt.day, h, m);
+            if (startDt.hour >= 16 && h < 12) {
+              checkDt = checkDt.add(const Duration(days: 1));
+            } else if (startDt.hour < 8 && h >= 18) {
+              checkDt = checkDt.subtract(const Duration(days: 1));
+            }
             final diffMinutes = checkDt.difference(startDt).inMinutes; // positive = zu spät
             if (diffMinutes > 0) {
               checkinStat = '🔴'; // nach Schichtbeginn
@@ -1527,6 +1552,23 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                 ],
                                               ),
                                             ],
+                                            if (slot.oNr != null && slot.oNr!.trim().isNotEmpty) ...[
+                                              const SizedBox(height: 2),
+                                              Row(
+                                                children: [
+                                                  Icon(Icons.folder_shared_outlined, size: 14, color: Colors.purple.shade700),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    'Ordner #${slot.oNr}',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: Colors.purple.shade800,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
                                             // ── Schicht-Annahme Buttons ───────────────────────────
                                             if (AclService().canAcceptShifts && !slot.isAccepted && !slot.isRejected && !slot.isRueckgabe) ...[
                                               const SizedBox(height: 8),
@@ -1963,12 +2005,14 @@ class _SlotsScreenState extends State<SlotsScreen> {
                       ]),
                     ),
                   
-                  if (slot.angestellteName != null || slot.kooperationspartnerName != null) ...[
+                  if (slot.angestellteName != null || slot.kooperationspartnerName != null || (slot.oNr != null && slot.oNr!.isNotEmpty)) ...[
                     const Divider(height: 24),
                     if (slot.angestellteName != null)
                       _buildDetailRow(Icons.person, 'Mitarbeiter', slot.angestellteName!),
                     if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
                       _buildDetailRow(Icons.handshake, 'Partner', slot.kooperationspartnerName!),
+                    if (slot.oNr != null && slot.oNr!.isNotEmpty)
+                      _buildDetailRow(Icons.folder_shared_outlined, 'Ordnernummer', '#${slot.oNr}'),
                   ],
 
                   // Admin Presence Tracking
