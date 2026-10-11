@@ -15,6 +15,7 @@ class Slot {
   final String? positionsname;
   final String? firmaFarbcode;
   final String? color; // Direkte Schichtfarbe (= EspoCRM Kalenderfarbe)
+  final String? kooperationspartnerId;
   final String? kooperationspartnerName;
   final double? stundenanzahl;
   final String? checkin;
@@ -65,6 +66,7 @@ class Slot {
     this.positionsname,
     this.firmaFarbcode,
     this.color,
+    this.kooperationspartnerId,
     this.kooperationspartnerName,
     this.stundenanzahl,
     this.checkin,
@@ -110,6 +112,7 @@ class Slot {
       positionsname: json['positionsname'],
       firmaFarbcode: json['firmaFarbcode'],
       color: json['color'],
+      kooperationspartnerId: json['kooperationspartnerId'] ?? json['kooperationspartner_id'],
       kooperationspartnerName: json['kooperationspartnerName'],
       neueobjektstrasse: json['neueobjektstrasse'],
       neueobjektplz: json['neueobjektplz'],
@@ -155,6 +158,7 @@ class Slot {
     String? positionsname,
     String? firmaFarbcode,
     String? color,
+    String? kooperationspartnerId,
     String? kooperationspartnerName,
     double? stundenanzahl,
     String? checkin,
@@ -198,6 +202,7 @@ class Slot {
       positionsname: positionsname ?? this.positionsname,
       firmaFarbcode: firmaFarbcode ?? this.firmaFarbcode,
       color: color ?? this.color,
+      kooperationspartnerId: kooperationspartnerId ?? this.kooperationspartnerId,
       kooperationspartnerName: kooperationspartnerName ?? this.kooperationspartnerName,
       stundenanzahl: stundenanzahl ?? this.stundenanzahl,
       checkin: checkin ?? this.checkin,

@@ -816,6 +816,73 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     }
   }
 
+  bool _hasOrdnerNummerChip(Slot slot) {
+    final canEdit = slot.canUserEditOnr(_currentAngestellteId, isAdmin: _acl.isAdmin);
+    final hasOnr = slot.oNr != null && slot.oNr!.trim().isNotEmpty;
+    return hasOnr || canEdit;
+  }
+
+  /// Öffnet ein modales Sheet zur Mitarbeiterauswahl für eine Schicht (gefiltert nach Kooperationspartner)
+  Future<void> _showEmployeeSelectionSheet(Slot slot) async {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return _EmployeeSelectionSheet(
+          slot: slot,
+          isDark: isDark,
+          onEmployeeSelected: (empId, empName) async {
+            Navigator.pop(sheetContext);
+            await _assignEmployee(slot, empId, empName);
+          },
+          onRemoveAssignment: () async {
+            Navigator.pop(sheetContext);
+            await _assignEmployee(slot, null, null);
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _assignEmployee(Slot slot, String? angestellteId, String? angestellteName) async {
+    try {
+      final res = await _api.assignEmployeeToSlot(
+        slotId: slot.id,
+        angestellteId: angestellteId,
+      );
+
+      if (res['success'] == true) {
+        if (!mounted) return;
+        setState(() {
+          final idx = _allRelevantSlots.indexWhere((s) => s.id == slot.id);
+          if (idx != -1) {
+            _allRelevantSlots[idx] = _allRelevantSlots[idx].copyWith(
+              angestellteId: angestellteId,
+              angestellteName: angestellteName ?? '',
+              oNr: res['oNr']?.toString() ?? _allRelevantSlots[idx].oNr,
+            );
+          }
+        });
+
+        _showSuccessSnackbar(
+          angestellteId != null
+              ? '✅ $angestellteName erfolgreich der Schicht zugewiesen'
+              : '✅ Mitarbeiter-Zuweisung entfernt',
+        );
+
+        // Hintergrund-Aktualisierung
+        _loadTodaysSlots(silent: true);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorSnackbar('❌ Fehler bei der Zuweisung: $e');
+    }
+  }
+
   Widget _buildOrdnerNummerChip(Slot slot, bool isDark) {
     final canEdit = slot.canUserEditOnr(_currentAngestellteId, isAdmin: _acl.isAdmin);
     final hasOnr = slot.oNr != null && slot.oNr!.trim().isNotEmpty;
@@ -1227,6 +1294,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
         _currentAngestellteId != null &&
         slot.angestellteId != _currentAngestellteId;
     final showEmployeeHeader = _hasSupervisorCapabilities || isOtherEmployee;
+    final canAssignEmployee = slot.isEinsatzleiter(_currentAngestellteId) || _acl.isAdmin;
+    final hasAssignedEmployee = slot.angestellteName != null && slot.angestellteName!.trim().isNotEmpty;
 
     return Card(
       key: ValueKey(slot.id),
@@ -1243,75 +1312,197 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
           children: [
             // Prominenter Mitarbeiter-Header (bei Supervisor/Admin/Team-Ansicht)
             if (showEmployeeHeader) ...[
-              Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white.withOpacity(0.06) : Colors.blue.withOpacity(0.06),
+              if (!hasAssignedEmployee)
+                if (canAssignEmployee)
+                  InkWell(
+                    onTap: () => _showEmployeeSelectionSheet(slot),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.amber.shade900.withOpacity(0.18) : Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isDark ? Colors.amber.shade400.withOpacity(0.7) : Colors.amber.shade700,
+                          width: 1.2,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 12,
+                            backgroundColor: isDark ? Colors.amber.shade800 : Colors.amber.shade100,
+                            child: Icon(Icons.person_add_alt_1, size: 14, color: isDark ? Colors.amberAccent : Colors.amber.shade900),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Mitarbeiter auswählen',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: isDark ? Colors.amberAccent : Colors.amber.shade900,
+                                  ),
+                                ),
+                                if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
+                                  Text(
+                                    'Firma: ${slot.kooperationspartnerName}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: isDark ? Colors.white70 : Colors.grey.shade700,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isDark ? Colors.amber.shade700 : Colors.amber.shade600,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.search, size: 12, color: Colors.white),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Zuweisen',
+                                  style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.grey.withOpacity(0.3),
+                      ),
+                    ),
+                    child: const Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 11,
+                          backgroundColor: Colors.grey,
+                          child: Icon(Icons.person_outline, size: 14, color: Colors.white),
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Mitarbeiter noch nicht zugewiesen',
+                            style: TextStyle(
+                              fontStyle: FontStyle.italic,
+                              fontSize: 13,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+              else
+                InkWell(
+                  onTap: canAssignEmployee ? () => _showEmployeeSelectionSheet(slot) : null,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.2),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white.withOpacity(0.06) : Colors.blue.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 11,
+                          backgroundColor: isDark ? Colors.blueGrey.shade800 : Colors.blue.shade100,
+                          child: Icon(Icons.person, size: 14, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            slot.angestellteName!,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: isDark ? Colors.white : AppConstants.primaryColor,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (canAssignEmployee) ...[
+                          const SizedBox(width: 4),
+                          Icon(Icons.edit, size: 12, color: isDark ? Colors.white54 : Colors.grey),
+                          const SizedBox(width: 6),
+                        ],
+                        if (slot.isEinsatzleiter(_currentAngestellteId))
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.shade700.withOpacity(0.18),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Text(
+                              'Einsatzleitung',
+                              style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 11,
-                      backgroundColor: isDark ? Colors.blueGrey.shade800 : Colors.blue.shade100,
-                      child: Icon(Icons.person, size: 14, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        slot.angestellteName != null && slot.angestellteName!.isNotEmpty
-                            ? slot.angestellteName!
-                            : 'Mitarbeiter noch nicht zugewiesen',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                          color: isDark ? Colors.white : AppConstants.primaryColor,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (slot.isEinsatzleiter(_currentAngestellteId))
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.shade700.withOpacity(0.18),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text(
-                          'Einsatzleitung',
-                          style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
             ],
 
-            // Status-Badge, Ordnernummer & Zeit
+            // Status-Badge, Ordnernummer & Zeit (Unter- und nebeneinander, kein Überlauf)
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: statusColor.withOpacity(0.4)),
-                  ),
-                  child: Text(
-                    statusText,
-                    style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: statusColor.withOpacity(0.4)),
+                        ),
+                        child: Text(
+                          statusText,
+                          style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      if (_hasOrdnerNummerChip(slot)) ...[
+                        const SizedBox(height: 6),
+                        _buildOrdnerNummerChip(slot, isDark),
+                      ],
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                _buildOrdnerNummerChip(slot, isDark),
-                const Spacer(),
                 if (startStr != null)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04),
                       borderRadius: BorderRadius.circular(6),
@@ -1507,6 +1698,421 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmployeeSelectionSheet extends StatefulWidget {
+  final Slot slot;
+  final bool isDark;
+  final Function(String empId, String empName) onEmployeeSelected;
+  final VoidCallback onRemoveAssignment;
+
+  const _EmployeeSelectionSheet({
+    super.key,
+    required this.slot,
+    required this.isDark,
+    required this.onEmployeeSelected,
+    required this.onRemoveAssignment,
+  });
+
+  @override
+  State<_EmployeeSelectionSheet> createState() => _EmployeeSelectionSheetState();
+}
+
+class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
+  final ApiService _api = ApiService();
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  bool _isLoading = true;
+  String? _error;
+  List<Map<String, dynamic>> _allEmployees = [];
+  List<Map<String, dynamic>> _filteredEmployees = [];
+  String? _kpName;
+
+  @override
+  void initState() {
+    super.initState();
+    _kpName = widget.slot.kooperationspartnerName;
+    _fetchEmployees();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchEmployees({String? search}) async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final res = await _api.getAssignableEmployees(
+        slotId: widget.slot.id,
+        search: search,
+      );
+
+      final list = (res['list'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
+      final kpName = res['kooperationspartnerName'] as String?;
+
+      if (!mounted) return;
+      setState(() {
+        _allEmployees = list;
+        _filteredEmployees = list;
+        if (kpName != null && kpName.isNotEmpty) {
+          _kpName = kpName;
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Fehler beim Laden: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _onSearchChanged(String query) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) {
+      setState(() => _filteredEmployees = _allEmployees);
+      return;
+    }
+
+    setState(() {
+      _filteredEmployees = _allEmployees.where((emp) {
+        final name = (emp['name'] ?? '').toString().toLowerCase();
+        final pNr = (emp['personalnummer'] ?? '').toString().toLowerCase();
+        final oNr = (emp['oNr'] ?? '').toString().toLowerCase();
+        final quals = (emp['qualifikationen'] as List? ?? []).join(' ').toLowerCase();
+        return name.contains(q) || pNr.contains(q) || oNr.contains(q) || quals.contains(q);
+      }).toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final isDark = widget.isDark;
+    final hasCurrentEmployee = widget.slot.angestellteId != null && widget.slot.angestellteId!.isNotEmpty;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.82,
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E222B) : Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + bottomInset),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Drag Handle
+          Center(
+            child: Container(
+              width: 44,
+              height: 4,
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white24 : Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Header: Titel & Kooperationspartner
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.person_search_rounded,
+                  color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Mitarbeiter zuweisen',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Firma: ${_kpName ?? widget.slot.kooperationspartnerName ?? 'MB-SCC'}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark ? Colors.white70 : Colors.grey.shade700,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Suchleiste mit Live-Suche
+          TextField(
+            controller: _searchCtrl,
+            onChanged: _onSearchChanged,
+            decoration: InputDecoration(
+              hintText: 'Nach Name, Personal-Nr. oder Ordner-Nr. suchen...',
+              hintStyle: TextStyle(fontSize: 13, color: isDark ? Colors.white38 : Colors.grey.shade500),
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: _searchCtrl.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        _onSearchChanged('');
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: isDark ? Colors.cyanAccent : AppConstants.primaryColor, width: 1.5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Treffer-Anzahl & Schicht-Info
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _isLoading
+                      ? 'Lade Mitarbeiter...'
+                      : '${_filteredEmployees.length} Mitarbeiter verfügbar',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white54 : Colors.grey.shade600,
+                  ),
+                ),
+                if (hasCurrentEmployee)
+                  InkWell(
+                    onTap: widget.onRemoveAssignment,
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      child: Row(
+                        children: [
+                          Icon(Icons.person_remove_outlined, size: 13, color: Colors.red.shade400),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Zuweisung aufheben',
+                            style: TextStyle(fontSize: 11, color: Colors.red.shade400, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 12),
+
+          // Liste der Mitarbeiter
+          Expanded(
+            child: _buildListContent(isDark),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildListContent(bool isDark) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 36, color: Colors.red.shade400),
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: Colors.red), textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: () => _fetchEmployees(),
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Erneut versuchen'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_filteredEmployees.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.person_off_outlined, size: 40, color: isDark ? Colors.white24 : Colors.grey.shade400),
+            const SizedBox(height: 10),
+            Text(
+              _searchCtrl.text.isNotEmpty
+                  ? 'Kein Mitarbeiter für „${_searchCtrl.text}“ gefunden'
+                  : 'Keine aktiven Mitarbeiter für diese Partnerfirma gefunden',
+              style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.shade600, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.separated(
+      itemCount: _filteredEmployees.length,
+      separatorBuilder: (_, __) => Divider(height: 1, color: isDark ? Colors.white10 : Colors.grey.shade200),
+      itemBuilder: (context, idx) {
+        final emp = _filteredEmployees[idx];
+        final empId = emp['id'] as String? ?? '';
+        final empName = emp['name'] as String? ?? '';
+        final pNr = emp['personalnummer'] as String?;
+        final oNr = emp['oNr'] as String?;
+        final quals = emp['qualifikationen'] as List? ?? [];
+        final isCurrentlyAssigned = widget.slot.angestellteId == empId;
+
+        final initials = empName.trim().isNotEmpty
+            ? empName.trim().split(' ').map((p) => p.isNotEmpty ? p[0] : '').take(2).join().toUpperCase()
+            : '?';
+
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          leading: CircleAvatar(
+            radius: 20,
+            backgroundColor: isCurrentlyAssigned
+                ? Colors.green.shade700
+                : (isDark ? Colors.blueGrey.shade800 : Colors.blue.shade100),
+            child: Text(
+              initials,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: isCurrentlyAssigned ? Colors.white : (isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+              ),
+            ),
+          ),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  empName,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: isCurrentlyAssigned
+                        ? (isDark ? Colors.greenAccent : Colors.green.shade800)
+                        : (isDark ? Colors.white : Colors.black87),
+                  ),
+                ),
+              ),
+              if (isCurrentlyAssigned)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.green.withOpacity(0.4)),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.check, size: 11, color: Colors.green),
+                      SizedBox(width: 3),
+                      Text('Zugewiesen', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                if (pNr != null && pNr.isNotEmpty)
+                  _buildTag('P-Nr. #$pNr', isDark, Colors.blueGrey),
+                if (oNr != null && oNr.isNotEmpty)
+                  _buildTag('Ordner #$oNr', isDark, Colors.purple),
+                ...quals.map((q) => _buildTag(q.toString(), isDark, Colors.teal)),
+              ],
+            ),
+          ),
+          trailing: isCurrentlyAssigned
+              ? null
+              : Icon(
+                  Icons.arrow_forward_ios,
+                  size: 14,
+                  color: isDark ? Colors.white38 : Colors.grey.shade400,
+                ),
+          onTap: isCurrentlyAssigned ? null : () => widget.onEmployeeSelected(empId, empName),
+        );
+      },
+    );
+  }
+
+  Widget _buildTag(String text, bool isDark, MaterialColor color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: isDark ? color.shade900.withOpacity(0.3) : color.shade50,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: isDark ? color.shade700.withOpacity(0.4) : color.shade300,
+          width: 0.8,
+        ),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: isDark ? color.shade200 : color.shade800,
         ),
       ),
     );

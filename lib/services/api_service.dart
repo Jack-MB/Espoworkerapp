@@ -298,7 +298,7 @@ class ApiService {
   Future<Slot?> getSlotById(String id) async {
     final url = Uri.parse(
         '${ServerConfig().apiUrl}/Slots/$id'
-        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,color,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
+        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,color,kooperationspartnerId,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
     final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Slot.fromJson(json.decode(response.body));
@@ -385,6 +385,44 @@ class ApiService {
       throw Exception(data['message'] ?? 'Nur der Einsatzleiter darf Ordnernummern ändern.');
     }
     throw Exception('Fehler beim Aktualisieren der Ordnernummer: ${response.statusCode}');
+  }
+
+  /// Lädt zuweisbare Mitarbeiter für eine Schicht (gefiltert nach Kooperationspartner der Schicht)
+  Future<Map<String, dynamic>> getAssignableEmployees({required String slotId, String? search}) async {
+    final baseUri = Uri.parse(ServerConfig().apiUrl);
+    final url = Uri(
+      scheme: baseUri.scheme,
+      host: baseUri.host,
+      port: baseUri.hasPort ? baseUri.port : null,
+      path: '${baseUri.path}/Slots/action/assignableEmployees',
+      queryParameters: {
+        'slotId': slotId,
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+      },
+    );
+
+    final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+    if (response.statusCode == 200) {
+      return json.decode(response.body) as Map<String, dynamic>;
+    }
+    throw Exception('Fehler beim Laden der Mitarbeiter: ${response.statusCode}');
+  }
+
+  /// Weist einer Schicht einen Mitarbeiter zu (oder entfernt die Zuweisung mit angestellteId: null)
+  Future<Map<String, dynamic>> assignEmployeeToSlot({required String slotId, String? angestellteId}) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/Slots/action/assignEmployee');
+    final headers = await _getHeaders();
+    final body = json.encode({
+      'slotId': slotId,
+      'angestellteId': angestellteId,
+    });
+
+    final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
+    if (response.statusCode == 200) {
+      return json.decode(response.body) as Map<String, dynamic>;
+    }
+    final data = json.decode(response.body);
+    throw Exception(data['message'] ?? 'Fehler beim Zuweisen des Mitarbeiters.');
   }
 
   /// Lädt Schichten speziell für den Check-in Bereich:
