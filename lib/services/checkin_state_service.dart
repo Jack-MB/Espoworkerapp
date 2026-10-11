@@ -201,7 +201,7 @@ class CheckinStateService extends ChangeNotifier {
   Future<Map<String, dynamic>> performCheckIn(Slot slot, {String? oNr, String? customTimeUtc}) async {
     final now = DateTime.now();
     final localTimeStr = DateFormat('HH:mm').format(now);
-    final utcTimeStr = customTimeUtc ?? now.toUtc().toString().split('.')[0];
+    final utcTimeStr = customTimeUtc ?? now.toUtc().toIso8601String();
 
     _checkedInSlotIds.add(slot.id);
     _checkedInTimes[slot.id] = localTimeStr;
@@ -233,7 +233,7 @@ class CheckinStateService extends ChangeNotifier {
   Future<Map<String, dynamic>> performCheckOut(Slot slot, {String? customTimeUtc}) async {
     final now = DateTime.now();
     final localTimeStr = DateFormat('HH:mm').format(now);
-    final utcTimeStr = customTimeUtc ?? now.toUtc().toString().split('.')[0];
+    final utcTimeStr = customTimeUtc ?? now.toUtc().toIso8601String();
 
     _checkedOutSlotIds.add(slot.id);
     _checkedOutTimes[slot.id] = localTimeStr;

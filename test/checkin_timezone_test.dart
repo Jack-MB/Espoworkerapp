@@ -30,6 +30,8 @@ void main() {
         baseDateUtc: baseDateUtc,
       );
       expect(utcFormatted, isNotNull);
+      expect(utcFormatted!.endsWith('Z'), isTrue);
+      expect(utcFormatted.contains('T'), isTrue);
 
       // Parsing the resulting UTC string back to local should give 14:30
       final localBack = formatUtcToLocalTime(utcFormatted);

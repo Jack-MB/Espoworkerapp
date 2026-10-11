@@ -327,7 +327,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     final now = DateTime.now();
     final nowHHMM = DateFormat('HH:mm').format(now);
     final nowUtc = now.toUtc();
-    final nowUtcStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(nowUtc);
+    final nowUtcStr = nowUtc.toIso8601String();
 
     HapticFeedback.mediumImpact();
 
@@ -443,7 +443,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     final now = DateTime.now();
     final nowHHMM = DateFormat('HH:mm').format(now);
     final nowUtc = now.toUtc();
-    final nowUtcStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(nowUtc);
+    final nowUtcStr = nowUtc.toIso8601String();
 
     HapticFeedback.heavyImpact();
 

@@ -357,7 +357,7 @@ class ApiService {
     }
 
     // Fallback: direct patchSlot (Admin / Legacy)
-    final checkinVal = checkInTime ?? DateTime.now().toUtc().toString().split('.')[0];
+    final checkinVal = checkInTime ?? DateTime.now().toUtc().toIso8601String();
     final patchData = <String, dynamic>{
       'checkin': checkinVal,
       'cI': '🟢',
@@ -451,7 +451,7 @@ class ApiService {
     }
 
     // Fallback: direct patchSlot (Admin / Legacy)
-    final checkoutVal = checkOutTime ?? DateTime.now().toUtc().toString().split('.')[0];
+    final checkoutVal = checkOutTime ?? DateTime.now().toUtc().toIso8601String();
     return patchSlot(slotId, {'checkout': checkoutVal});
   }
 

@@ -129,7 +129,7 @@ String? formatLocalToUtcDateTime({
       );
     }
 
-    return _espoFormat.format(localDate.toUtc());
+    return localDate.toUtc().toIso8601String();
   } catch (e) {
     return null;
   }
