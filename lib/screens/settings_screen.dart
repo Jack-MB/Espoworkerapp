@@ -16,11 +16,30 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isCheckingUpdate = false;
+  String _appVersion = AppConstants.appVersion;
+  int _appBuild = AppConstants.appBuildNumber;
+
+  @override
+  void initState() {
+    super.initState();
+    _initVersionInfo();
+  }
+
+  Future<void> _initVersionInfo() async {
+    final info = await AppUpdateService().getCurrentAppVersion();
+    if (mounted) {
+      setState(() {
+        _appVersion = info['version']?.toString() ?? AppConstants.appVersion;
+        _appBuild = int.tryParse(info['build']?.toString() ?? '') ?? AppConstants.appBuildNumber;
+      });
+    }
+  }
 
   void _triggerUpdateCheck() async {
     setState(() => _isCheckingUpdate = true);
     try {
       await AppUpdateService().checkAndPrompt(context, autoPrompt: false);
+      await _initVersionInfo();
     } finally {
       if (mounted) {
         setState(() => _isCheckingUpdate = false);
@@ -216,7 +235,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         : const Icon(Icons.system_update_rounded, color: Colors.purple),
                   ),
                   title: const Text('Auf Updates prüfen', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('Installierte Version: v${AppConstants.appVersion}+${AppConstants.appBuildNumber}', style: const TextStyle(fontSize: 12)),
+                  subtitle: Text('Installierte Version: v$_appVersion+$_appBuild', style: const TextStyle(fontSize: 12)),
                   trailing: ElevatedButton(
                     onPressed: _isCheckingUpdate ? null : _triggerUpdateCheck,
                     style: ElevatedButton.styleFrom(
@@ -240,7 +259,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   title: const Text('Build & Umgebung', style: TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Text(
-                    kIsWeb ? 'PWA Web-Client (Build ${AppConstants.appBuildNumber}) • iOS / Android / Desktop' : 'Android Native APK (Build ${AppConstants.appBuildNumber}) • MB-SCC Security',
+                    kIsWeb ? 'PWA Web-Client (Build $_appBuild) • iOS / Android / Desktop' : 'Android Native APK (Build $_appBuild) • MB-SCC Security',
                     style: const TextStyle(fontSize: 12),
                   ),
                 ),
@@ -263,7 +282,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Mitarbeiter-Portal v${AppConstants.appVersion}+${AppConstants.appBuildNumber}',
+                  'Mitarbeiter-Portal v$_appVersion+$_appBuild',
                   style: TextStyle(
                     fontSize: 11,
                     color: isDark ? Colors.white24 : Colors.black26,

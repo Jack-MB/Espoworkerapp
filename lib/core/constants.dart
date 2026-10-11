@@ -5,7 +5,7 @@ class AppConstants {
 
   // App Version
   static const String appVersion = '1.3.16';
-  static const int appBuildNumber = 41;
+  static const int appBuildNumber = 42;
 
   // EspoCRM primary color hints (Slate / Dark Blue)
   static const Color primaryColor = Color(0xFF173D5D); // Espresso Dark Blue / Slate
