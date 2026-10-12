@@ -13,7 +13,11 @@ class WarehouseDepot {
   final String? letzteMaterialPruefungDatum;
   final String? naechsteMaterialPruefungDatum;
   final String? verantwortlicherName;
+  final List<String> weitereVerantwortlicheNames;
+  final String? userRole; // 'Hauptverantwortlicher', 'Stellvertreter', 'Einsatzleiter'
   final int? stockCount;
+  final int? ordnerkartenCount;
+  final int? openMaterialRequestsCount;
 
   WarehouseDepot({
     required this.id,
@@ -29,10 +33,20 @@ class WarehouseDepot {
     this.letzteMaterialPruefungDatum,
     this.naechsteMaterialPruefungDatum,
     this.verantwortlicherName,
+    this.weitereVerantwortlicheNames = const [],
+    this.userRole,
     this.stockCount,
+    this.ordnerkartenCount,
+    this.openMaterialRequestsCount,
   });
 
   factory WarehouseDepot.fromJson(Map<String, dynamic> json) {
+    final rawWeitere = json['weitereVerantwortlicheNames'];
+    List<String> parsedWeitere = [];
+    if (rawWeitere is List) {
+      parsedWeitere = rawWeitere.map((e) => e.toString()).toList();
+    }
+
     return WarehouseDepot(
       id: json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? 'Unbenanntes Depot',
@@ -47,7 +61,11 @@ class WarehouseDepot {
       letzteMaterialPruefungDatum: json['letzteMaterialPruefungDatum']?.toString(),
       naechsteMaterialPruefungDatum: json['naechsteMaterialPruefungDatum']?.toString(),
       verantwortlicherName: json['verantwortlicherName']?.toString(),
+      weitereVerantwortlicheNames: parsedWeitere,
+      userRole: json['userRole']?.toString(),
       stockCount: json['stockCount'] is int ? json['stockCount'] as int : null,
+      ordnerkartenCount: (json['ordnerkartenCount'] as num?)?.toInt(),
+      openMaterialRequestsCount: (json['openMaterialRequestsCount'] as num?)?.toInt(),
     );
   }
 
@@ -65,7 +83,11 @@ class WarehouseDepot {
     'letzteMaterialPruefungDatum': letzteMaterialPruefungDatum,
     'naechsteMaterialPruefungDatum': naechsteMaterialPruefungDatum,
     'verantwortlicherName': verantwortlicherName,
+    'weitereVerantwortlicheNames': weitereVerantwortlicheNames,
+    'userRole': userRole,
     'stockCount': stockCount,
+    'ordnerkartenCount': ordnerkartenCount,
+    'openMaterialRequestsCount': openMaterialRequestsCount,
   };
 
   bool get isMaintenanceNeeded =>

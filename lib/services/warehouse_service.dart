@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/server_config.dart';
 import 'secure_storage_service.dart';
 import '../models/warehouse_depot.dart';
+import '../models/ordnerkarte_item.dart';
+import '../models/material_request.dart';
 
 class WarehouseService {
   final SecureStorageService _storageService = SecureStorageService();
@@ -168,6 +170,109 @@ class WarehouseService {
       'warehouseId': warehouseId,
       'type': type,
       'bemerkung': note ?? 'Per Worker-App quittiert',
+    });
+
+    final response = await http.post(url, headers: headers, body: body).timeout(_timeout);
+    return response.statusCode == 200;
+  }
+
+  /// Lädt alle für ein Depot hinterlegten Ordnerkarten und Kartennummern.
+  Future<List<OrdnerkarteItem>> getDepotOrdnerkarten(String warehouseId) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/depotOrdnerkarten?warehouseId=$warehouseId');
+    final headers = await _getHeaders();
+
+    final response = await http.get(url, headers: headers).timeout(_timeout);
+    if (response.statusCode == 200) {
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      final list = (data['list'] as List?)
+              ?.map((e) => OrdnerkarteItem.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [];
+      return list;
+    } else {
+      throw Exception('Fehler beim Laden der Ordnerkarten: Status ${response.statusCode}');
+    }
+  }
+
+  /// Lädt den WMS-Artikelkatalog für die Materialanforderung.
+  Future<Map<String, List<CatalogProduct>>> getMaterialKatalog() async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/materialKatalog');
+    final headers = await _getHeaders();
+
+    final response = await http.get(url, headers: headers).timeout(_timeout);
+    if (response.statusCode == 200) {
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      final rawCats = data['categories'] as Map<String, dynamic>? ?? {};
+      final Map<String, List<CatalogProduct>> result = {};
+
+      rawCats.forEach((categoryName, items) {
+        if (items is List) {
+          result[categoryName] = items
+              .map((item) => CatalogProduct.fromJson(item as Map<String, dynamic>))
+              .toList();
+        }
+      });
+      return result;
+    } else {
+      throw Exception('Fehler beim Laden des Materialkatalogs: Status ${response.statusCode}');
+    }
+  }
+
+  /// Reicht eine neue Materialanforderung über die App ein.
+  Future<bool> createMaterialAnforderung({
+    required String zielLagerId,
+    required String bereich,
+    String dringlichkeit = 'Standard',
+    DateTime? benoetigtBis,
+    String? begruendung,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/createMaterialAnforderung');
+    final headers = await _getHeaders();
+
+    final body = json.encode({
+      'zielLagerId': zielLagerId,
+      'bereich': bereich,
+      'dringlichkeit': dringlichkeit,
+      'benoetigtBis': benoetigtBis?.toIso8601String(),
+      'begruendung': begruendung,
+      'items': items,
+    });
+
+    final response = await http.post(url, headers: headers, body: body).timeout(_timeout);
+    return response.statusCode == 200;
+  }
+
+  /// Ruft die Materialanforderungen für ein Depot oder den Benutzer ab.
+  Future<List<MaterialRequestHeader>> getMyMaterialAnforderungen({String? warehouseId}) async {
+    final uri = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/myMaterialAnforderungen').replace(
+      queryParameters: {
+        if (warehouseId != null) 'warehouseId': warehouseId,
+      },
+    );
+    final headers = await _getHeaders();
+
+    final response = await http.get(uri, headers: headers).timeout(_timeout);
+    if (response.statusCode == 200) {
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      final list = (data['list'] as List?)
+              ?.map((e) => MaterialRequestHeader.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [];
+      return list;
+    } else {
+      throw Exception('Fehler beim Laden der Materialanforderungen: Status ${response.statusCode}');
+    }
+  }
+
+  /// Quittiert den Wareneingang vor Ort.
+  Future<bool> confirmMaterialDelivery(String anforderungId, {Map<String, double>? items}) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/confirmDelivery');
+    final headers = await _getHeaders();
+
+    final body = json.encode({
+      'id': anforderungId,
+      if (items != null) 'items': items,
     });
 
     final response = await http.post(url, headers: headers, body: body).timeout(_timeout);
