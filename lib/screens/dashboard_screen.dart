@@ -31,6 +31,7 @@ import 'angestellte_profile_screen.dart';
 import 'angestellte_list_screen.dart';
 import 'notifications_screen.dart';
 import 'abwesenheit_screen.dart';
+import 'abwesenheiten_hub_screen.dart';
 import 'meeting_list_screen.dart';
 import 'email_list_screen.dart';
 import 'chat_list_screen.dart';
@@ -2988,13 +2989,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const ArbeitszeitkontoScreen()));
                   }),
                   _buildDrawerItem(Icons.flight_takeoff, 'Urlaub', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const UrlaubScreen()));
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AbwesenheitenHubScreen(initialIndex: 0)));
                   }),
                   _buildDrawerItem(Icons.local_hospital, 'Krankentage', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const KrankentageScreen()));
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AbwesenheitenHubScreen(initialIndex: 1)));
                   }),
-                  _buildDrawerItem(Icons.timer_off, 'Abwesenheit', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AbwesenheitScreen()));
+                  _buildDrawerItem(Icons.timer_off, 'Termine & Abwesenheit', () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AbwesenheitenHubScreen(initialIndex: 2)));
                   }),
                 ],
               ),

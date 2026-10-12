@@ -10,7 +10,8 @@ import '../models/document.dart';
 import 'document_viewer_screen.dart';
 
 class KrankentageScreen extends StatefulWidget {
-  const KrankentageScreen({Key? key}) : super(key: key);
+  final bool embedded;
+  const KrankentageScreen({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   _KrankentageScreenState createState() => _KrankentageScreenState();
@@ -19,6 +20,7 @@ class KrankentageScreen extends StatefulWidget {
 class _KrankentageScreenState extends State<KrankentageScreen> {
   final ApiService _apiService = ApiService();
   Future<List<Krankentage>>? _krankentageFuture;
+  Future<Map<String, dynamic>?>? _overviewFuture;
 
   @override
   void initState() {
@@ -29,6 +31,7 @@ class _KrankentageScreenState extends State<KrankentageScreen> {
   void _loadData() {
     setState(() {
       _krankentageFuture = _apiService.getKrankentage();
+      _overviewFuture = _apiService.getMyAbsenceOverview();
     });
   }
 
@@ -49,8 +52,328 @@ class _KrankentageScreenState extends State<KrankentageScreen> {
     });
   }
 
+  Widget _buildSickLeaveHeader(Map<String, dynamic>? overview) {
+    final krankData = overview?['krankentage'] as Map<String, dynamic>?;
+    final tageJahr = krankData?['krankentageJahr'] ?? 0;
+    final tageGesamt = krankData?['gesamtKrankentage'] ?? 0;
+    final openWithoutAU = krankData?['openWithoutAUCount'] ?? 0;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.healing, size: 18, color: Colors.red.shade700),
+              const SizedBox(width: 8),
+              const Text(
+                'Krankheitsübersicht',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.03),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.calendar_today, size: 15, color: Colors.red.shade700),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Jahr 2026',
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey.shade700),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '$tageJahr ${tageJahr == 1 ? "Schichttag" : "Schichttage"}',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'EFZG Lohnfortzahlung',
+                        style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.03),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.history, size: 15, color: Colors.indigo),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Gesamte Historie',
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey.shade700),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '$tageGesamt ${tageGesamt == 1 ? "Tag" : "Tage"}',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Schichten ausgefallen',
+                        style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (openWithoutAU > 0) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.orange.shade300),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, size: 22, color: Colors.orange.shade800),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '$openWithoutAU Krankmeldung(en) ohne AU-Bescheinigung. Bitte reiche das Dokument baldmöglichst nach.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.orange.shade900,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final scaffoldBody = FutureBuilder<Map<String, dynamic>?>(
+      future: _overviewFuture,
+      builder: (context, overviewSnapshot) {
+        final overview = overviewSnapshot.data;
+
+        return RefreshIndicator(
+          onRefresh: () async => _loadData(),
+          child: Column(
+            children: [
+              _buildSickLeaveHeader(overview),
+              const Divider(height: 1),
+              Expanded(
+                child: FutureBuilder<List<Krankentage>>(
+                  future: _krankentageFuture ?? Future.value([]),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return Center(child: Text('Fehler beim Laden: ${snapshot.error}'));
+                    }
+                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                      return ListView(
+                        children: const [
+                          SizedBox(height: 60),
+                          Center(
+                            child: Column(
+                              children: [
+                                Icon(Icons.favorite_border, size: 48, color: Colors.green),
+                                SizedBox(height: 12),
+                                Text(
+                                  'Keine Krankmeldungen vorhanden.',
+                                  style: TextStyle(color: Colors.grey, fontSize: 15),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+
+                    final list = snapshot.data!;
+                    return ListView.builder(
+                      padding: const EdgeInsets.only(top: 8, bottom: 90),
+                      itemCount: list.length,
+                      itemBuilder: (context, index) {
+                        final krank = list[index];
+                        final bool hasAU = krank.krankenscheinId != null && krank.krankenscheinId!.isNotEmpty;
+
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () {
+                              if (!hasAU) {
+                                showModalBottomSheet(
+                                  context: context,
+                                  isScrollControlled: true,
+                                  shape: const RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                                  ),
+                                  builder: (ctx) => _UploadAUForm(krankId: krank.id),
+                                ).then((uploaded) {
+                                  if (uploaded == true) _loadData();
+                                });
+                              } else {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => DocumentViewerScreen(
+                                      document: EspoDocument(
+                                        id: krank.id,
+                                        name: 'AU-Bescheinigung',
+                                        status: 'Active',
+                                        fileId: krank.krankenscheinId,
+                                        fileName: krank.krankenscheinName ?? 'AU-Bescheinigung.pdf',
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          krank.name,
+                                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: krank.statusColor.withOpacity(0.12),
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: krank.statusColor.withOpacity(0.5)),
+                                        ),
+                                        child: Text(
+                                          krank.displayStatus,
+                                          style: TextStyle(
+                                            color: krank.statusColor,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.date_range, size: 16, color: Colors.grey.shade600),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          krank.formattedDateRange +
+                                              (krank.kalendertage != null
+                                                  ? ' (${krank.kalendertage} ${krank.kalendertage == 1 ? "Tag" : "Tage"})'
+                                                  : ''),
+                                          style: TextStyle(
+                                            color: Colors.grey.shade800,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        hasAU ? Icons.check_circle : Icons.warning,
+                                        size: 16,
+                                        color: hasAU ? Colors.green : Colors.orange,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          hasAU
+                                              ? 'AU: ${krank.krankenscheinName ?? "hochgeladen (tippen zum Anzeigen)"}'
+                                              : 'Keine AU eingereicht – Hier tippen zum Nachreichen',
+                                          style: TextStyle(
+                                            color: hasAU ? Colors.green.shade700 : Colors.orange.shade800,
+                                            fontSize: 13,
+                                            fontWeight: hasAU ? FontWeight.normal : FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (widget.embedded) {
+      return scaffoldBody;
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Krankmeldungen'),
@@ -63,133 +386,7 @@ class _KrankentageScreenState extends State<KrankentageScreen> {
           ),
         ],
       ),
-      body: FutureBuilder<List<Krankentage>>(
-        future: _krankentageFuture ?? Future.value([]),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Fehler beim Laden: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('Keine Krankentage gefunden.'));
-          }
-
-          final list = snapshot.data!;
-          return ListView.builder(
-            padding: const EdgeInsets.only(bottom: 80),
-            itemCount: list.length,
-            itemBuilder: (context, index) {
-              final krank = list[index];
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () {
-                    if (krank.krankenscheinId == null) {
-                      showModalBottomSheet(
-                        context: context,
-                        isScrollControlled: true,
-                        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-                        builder: (ctx) => _UploadAUForm(krankId: krank.id),
-                      ).then((uploaded) {
-                        if (uploaded == true) _loadData();
-                      });
-                    } else {
-                      // Open the uploaded document
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => DocumentViewerScreen(
-                            document: EspoDocument(
-                              id: krank.id,
-                              name: 'AU-Bescheinigung',
-                              status: 'Active',
-                              fileId: krank.krankenscheinId,
-                              fileName: krank.krankenscheinName ?? 'AU-Bescheinigung.pdf',
-                            ),
-                          ),
-                        ),
-                      );
-                    }
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                krank.name,
-                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: krank.statusColor.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: krank.statusColor.withOpacity(0.5)),
-                              ),
-                              child: Text(
-                                krank.displayStatus,
-                                style: TextStyle(
-                                  color: krank.statusColor,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Icon(Icons.date_range, size: 16, color: Colors.grey.shade600),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                krank.formattedDateRange + (krank.kalendertage != null ? ' (${krank.kalendertage} ${krank.kalendertage == 1 ? "Tag" : "Tage"})' : ''),
-                                style: TextStyle(color: Colors.grey.shade800, fontWeight: FontWeight.w500),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Icon(krank.krankenscheinId != null ? Icons.check_circle : Icons.warning, 
-                                 size: 16, 
-                                 color: krank.krankenscheinId != null ? Colors.green : Colors.orange),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                krank.krankenscheinId != null 
-                                    ? 'AU: ${krank.krankenscheinName ?? "hochgeladen"}' 
-                                    : 'Keine AU eingereicht – Hier tippen zum Nachreichen',
-                                style: TextStyle(
-                                  color: krank.krankenscheinId != null ? Colors.green.shade700 : Colors.orange.shade800, 
-                                  fontSize: 13,
-                                  fontWeight: krank.krankenscheinId == null ? FontWeight.bold : FontWeight.normal,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      ),
+      body: scaffoldBody,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _showCreateKrankmeldungSheet,
         backgroundColor: Colors.red.shade600,
@@ -260,7 +457,6 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
     setState(() => _isSubmitting = true);
 
     String? uploadedFileId;
-
     if (_fileBytes != null && _fileName != null) {
       final ext = _fileName!.split('.').last.toLowerCase();
       String mimeType = 'application/pdf';
@@ -274,22 +470,13 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
         parentType: 'CKrankenscheine',
         field: 'krankenschein',
       );
-      
-      if (uploadedFileId == null) {
-        if (mounted) {
-          setState(() => _isSubmitting = false);
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Hochladen der AU-Bescheinigung.')));
-        }
-        return;
-      }
     }
 
     final start = _selectedRange!.start;
     final end = _selectedRange!.end;
-    
     final startStr = '${start.year.toString().padLeft(4, '0')}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')} 00:00:00';
     final endStr = '${end.year.toString().padLeft(4, '0')}-${end.month.toString().padLeft(2, '0')}-${end.day.toString().padLeft(2, '0')} 23:59:59';
-    
+
     final success = await _apiService.createKrankentage(
       dateStart: startStr,
       dateEnd: endStr,
@@ -321,38 +508,61 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    int? days;
+    if (_selectedRange != null) {
+      days = _selectedRange!.end.difference(_selectedRange!.start).inDays + 1;
+    }
+
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset, left: 24, right: 24, top: 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('Neue Krankmeldung eintragen', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Neue Krankmeldung eintragen', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
+              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+            ],
+          ),
+          const SizedBox(height: 16),
           OutlinedButton.icon(
             onPressed: _pickDate,
             icon: const Icon(Icons.date_range),
-            label: Text(_selectedRange == null 
-              ? 'Ausfall-Zeitraum wählen' 
-              : '${DateFormat('dd.MM.yyyy').format(_selectedRange!.start)} - ${DateFormat('dd.MM.yyyy').format(_selectedRange!.end)}'),
+            label: Text(
+              _selectedRange == null
+                  ? 'Ausfall-Zeitraum wählen'
+                  : '${DateFormat('dd.MM.yyyy').format(_selectedRange!.start)} – ${DateFormat('dd.MM.yyyy').format(_selectedRange!.end)} ${days != null ? "($days Tage)" : ""}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
               alignment: Alignment.centerLeft,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           OutlinedButton.icon(
             onPressed: _pickFile,
-            icon: const Icon(Icons.upload_file),
-            label: Text(_fileName == null 
-              ? 'AU-Bescheinigung hochladen (optional)' 
-              : 'Ausgewählt: $_fileName'),
+            icon: Icon(_fileName != null ? Icons.check_circle : Icons.upload_file,
+                color: _fileName != null ? Colors.green : null),
+            label: Text(
+              _fileName == null
+                  ? 'AU-Bescheinigung hochladen (optional)'
+                  : 'Ausgewählt: $_fileName',
+              style: TextStyle(
+                fontWeight: _fileName != null ? FontWeight.bold : FontWeight.normal,
+                color: _fileName != null ? Colors.green.shade800 : null,
+              ),
+            ),
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
               alignment: Alignment.centerLeft,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           TextField(
             controller: _descController,
             decoration: const InputDecoration(
@@ -361,7 +571,7 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
             ),
             maxLines: 2,
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           ElevatedButton(
             onPressed: _isSubmitting ? null : _submit,
             style: ElevatedButton.styleFrom(
@@ -369,9 +579,16 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
-            child: _isSubmitting 
-              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-              : const Text('Krank melden', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            child: _isSubmitting
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                  )
+                : const Text(
+                    'Krank melden',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
           ),
           const SizedBox(height: 24),
         ],
@@ -441,7 +658,9 @@ class __UploadAUFormState extends State<_UploadAUForm> {
     if (uploadedFileId == null) {
       if (mounted) {
         setState(() => _isSubmitting = false);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fehler beim Hochladen der AU-Bescheinigung.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fehler beim Hochladen der AU-Bescheinigung.')),
+        );
       }
       return;
     }
@@ -478,17 +697,29 @@ class __UploadAUFormState extends State<_UploadAUForm> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('AU-Bescheinigung nachreichen', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('AU-Bescheinigung nachreichen', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
+              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+            ],
+          ),
+          const SizedBox(height: 20),
           OutlinedButton.icon(
             onPressed: _pickFile,
-            icon: const Icon(Icons.upload_file),
-            label: Text(_fileName == null 
-              ? 'Datei auswählen (PDF/Bild)' 
-              : 'Ausgewählt: $_fileName'),
+            icon: Icon(_fileName != null ? Icons.check_circle : Icons.upload_file,
+                color: _fileName != null ? Colors.green : null),
+            label: Text(
+              _fileName == null ? 'Datei auswählen (PDF/Bild)' : 'Ausgewählt: $_fileName',
+              style: TextStyle(
+                fontWeight: _fileName != null ? FontWeight.bold : FontWeight.normal,
+                color: _fileName != null ? Colors.green.shade800 : null,
+              ),
+            ),
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
               alignment: Alignment.centerLeft,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
           ),
           const SizedBox(height: 24),
@@ -499,9 +730,16 @@ class __UploadAUFormState extends State<_UploadAUForm> {
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
-            child: _isSubmitting 
-              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-              : const Text('Hochladen & Einreichen', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            child: _isSubmitting
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                  )
+                : const Text(
+                    'Hochladen & Einreichen',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
           ),
           const SizedBox(height: 24),
         ],

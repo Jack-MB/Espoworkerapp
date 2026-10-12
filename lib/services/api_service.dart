@@ -1240,11 +1240,16 @@ class ApiService {
         ? 'Urlaub $angestellteName'
         : 'Urlaubsantrag';
 
+    final String startDateOnly = dateStart.length >= 10 ? dateStart.substring(0, 10) : dateStart;
+    final String endDateOnly = dateEnd.length >= 10 ? dateEnd.substring(0, 10) : dateEnd;
+
     final body = json.encode({
       'name': name.trim(),
       'status': 'In Bearbeitung',
       'dateStart': dateStart, // e.g. "2026-03-20 00:00:00"
       'dateEnd': dateEnd,   // e.g. "2026-03-20 23:59:59"
+      'dateStartDate': startDateOnly,
+      'dateEndDate': endDateOnly,
       'description': description,
       'isAllDay': true, // Standard for vacation
       'parentId': angestellteId,
@@ -1285,11 +1290,16 @@ class ApiService {
         ? 'Krank $angestellteName'
         : 'Krankmeldung';
 
+    final String startDateOnly = dateStart.length >= 10 ? dateStart.substring(0, 10) : dateStart;
+    final String endDateOnly = dateEnd.length >= 10 ? dateEnd.substring(0, 10) : dateEnd;
+
     final body = json.encode({
       'name': name.trim(),
       'status': 'Planned', // Default typically used for illness in Espo
       'dateStart': dateStart,
       'dateEnd': dateEnd,
+      'dateStartDate': startDateOnly,
+      'dateEndDate': endDateOnly,
       'description': description,
       'isAllDay': true,
       if (krankenscheinId != null && krankenscheinId.isNotEmpty) 'krankenscheinId': krankenscheinId,
@@ -1479,11 +1489,16 @@ class ApiService {
     final angestellteId = await _storageService.getAngestellteId();
     final assignedUserId = await _storageService.getAssignedUserId();
     
+    final String? startDateOnly = isAllDay && dateStart.length >= 10 ? dateStart.substring(0, 10) : null;
+    final String? endDateOnly = isAllDay && dateEnd.length >= 10 ? dateEnd.substring(0, 10) : null;
+
     final body = json.encode({
       'name': name,
       'status': 'Planned',
       'dateStart': dateStart, // Format: "YYYY-MM-DD HH:mm:ss"
       'dateEnd': dateEnd,     // Format: "YYYY-MM-DD HH:mm:ss"
+      if (startDateOnly != null) 'dateStartDate': startDateOnly,
+      if (endDateOnly != null) 'dateEndDate': endDateOnly,
       'description': description,
       'isAllDay': isAllDay,
       'parentType': 'Angestellte',
@@ -1494,6 +1509,24 @@ class ApiService {
     
     final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
     return response.statusCode == 200 || response.statusCode == 201;
+  }
+
+  /// Ruft die konsolidierte Abwesenheitsübersicht (Urlaubskonto, Krankentage, offene AUs) ab.
+  Future<Map<String, dynamic>?> getMyAbsenceOverview() async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/Angestellte/action/myAbsenceOverview');
+      final headers = await _getHeaders();
+      final response = await _HttpWithTimeout.get(url, headers: headers);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is Map<String, dynamic> && data['success'] == true) {
+          return data;
+        }
+      }
+    } catch (e) {
+      debugPrint('getMyAbsenceOverview error: $e');
+    }
+    return null;
   }
 
   Future<List<Meeting>> getMeetings() async {
