@@ -23,7 +23,11 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
 
   bool _isLoading = true;
   String _searchQuery = '';
-  int _activeTab = 0; // 0: Bestand, 1: Ordnerkarten, 2: Anforderungen
+  int _activeTab = 0; // 0: Bestand, 1: Ordnerkarten, 2: Anforderungen, 3: Ausrüstung
+  bool _canManageHandover = false;
+  List<dynamic> _issuedItems = [];
+  List<dynamic> _availableHandoverItems = [];
+  List<dynamic> _equipmentCatalog = [];
 
   @override
   void initState() {
@@ -37,14 +41,20 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
       final stockFuture = _warehouseService.getDepotStock(widget.depot.id);
       final cardsFuture = _warehouseService.getDepotOrdnerkarten(widget.depot.id);
       final reqsFuture = _warehouseService.getMyMaterialAnforderungen(warehouseId: widget.depot.id);
+      final handoverFuture = _warehouseService.getDepotHandover(widget.depot.id);
 
-      final results = await Future.wait([stockFuture, cardsFuture, reqsFuture]);
+      final results = await Future.wait([stockFuture, cardsFuture, reqsFuture, handoverFuture]);
 
       if (mounted) {
+        final hData = results[3] as Map<String, dynamic>;
         setState(() {
           _stockItems = results[0] as List<DepotStockItem>;
           _ordnerkarten = results[1] as List<OrdnerkarteItem>;
           _requests = results[2] as List<MaterialRequestHeader>;
+          _canManageHandover = hData['canManage'] == true;
+          _issuedItems = hData['issuedItems'] as List;
+          _availableHandoverItems = hData['availableItems'] as List;
+          _equipmentCatalog = hData['equipmentCatalog'] as List;
           _isLoading = false;
         });
       }
@@ -386,8 +396,9 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
       child: Row(
         children: [
           _buildTabButton(0, 'Bestand (${_stockItems.length})', Icons.inventory_2),
-          _buildTabButton(1, 'Ordnerkarten (${_ordnerkarten.fold<int>(0, (s, c) => s + c.anzahl)})', Icons.badge),
-          _buildTabButton(2, 'Anforderungen (${_requests.length})', Icons.shopping_bag),
+          _buildTabButton(1, 'Karten (${_ordnerkarten.fold<int>(0, (s, c) => s + c.anzahl)})', Icons.badge),
+          _buildTabButton(2, 'Bestellung (${_requests.length})', Icons.shopping_bag),
+          _buildTabButton(3, 'Ausgabe (${_issuedItems.length})', Icons.handshake),
         ],
       ),
     );
@@ -412,14 +423,14 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(icon, size: 16, color: isSelected ? const Color(0xFFC084FC) : Colors.white54),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Flexible(
                 child: Text(
                   label,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: isSelected ? Colors.white : Colors.white54,
-                    fontSize: 11,
+                    fontSize: 10.5,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
@@ -439,6 +450,8 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
         return _buildOrdnerkartenList();
       case 2:
         return _buildRequestsList();
+      case 3:
+        return _buildHandoverTab();
       default:
         return const SizedBox();
     }
@@ -788,6 +801,751 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
         return Colors.grey;
     }
   }
+
+  // ==========================================
+  // TAB 3: AUSRÜSTUNGSAUSGABE & RÜCKNAHME (WMS)
+  // ==========================================
+
+  Widget _buildHandoverTab() {
+    return Column(
+      children: [
+        // Permission & Quick Action Header
+        Container(
+          padding: const EdgeInsets.all(14),
+          color: const Color(0xFF1E293B),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _canManageHandover ? const Color(0xFF064E3B) : const Color(0xFF334155),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _canManageHandover ? const Color(0xFF10B981) : Colors.white24,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _canManageHandover ? Icons.verified_user : Icons.lock_outline,
+                      color: _canManageHandover ? const Color(0xFF10B981) : Colors.white60,
+                      size: 15,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _canManageHandover ? 'Freigabe: Ausgabe aktiv' : 'Nur Ansicht (Keine Freigabe)',
+                      style: TextStyle(
+                        color: _canManageHandover ? const Color(0xFF10B981) : Colors.white70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              if (_canManageHandover)
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF8B5CF6),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: const Icon(Icons.handshake, size: 16, color: Colors.white),
+                  label: const Text('Ausgeben', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                  onPressed: _showIssueEquipmentDialog,
+                ),
+            ],
+          ),
+        ),
+
+        // List of issued gear
+        Expanded(
+          child: _issuedItems.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.inventory_2_outlined, size: 48, color: Colors.white.withOpacity(0.3)),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Keine Ausrüstung aktuell verliehen',
+                        style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Alle Funkgeräte, Schlüssel und Ausstattungen befinden sich im Depot.',
+                        style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (_canManageHandover) ...[
+                        const SizedBox(height: 18),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
+                          icon: const Icon(Icons.add, color: Colors.white),
+                          label: const Text('Erste Ausrüstung an Posten übergeben', style: TextStyle(color: Colors.white)),
+                          onPressed: _showIssueEquipmentDialog,
+                        ),
+                      ],
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: _issuedItems.length,
+                  itemBuilder: (context, idx) {
+                    final item = _issuedItems[idx] as Map<String, dynamic>;
+                    final name = item['name']?.toString() ?? 'Ausrüstung';
+                    final recipient = item['issuedToName']?.toString() ?? 'Mitarbeiter';
+                    final persNr = item['issuedToPersonalnummer']?.toString();
+                    final cat = item['category']?.toString() ?? 'other';
+                    final qty = (item['quantity'] is num) ? (item['quantity'] as num).toDouble() : 1.0;
+                    final serial = item['serialNumber']?.toString();
+                    final desc = item['description']?.toString();
+
+                    IconData iconData = Icons.devices_other;
+                    if (cat == 'radio') iconData = Icons.cell_tower;
+                    if (cat == 'keys') iconData = Icons.vpn_key;
+                    if (cat == 'flashlight') iconData = Icons.flashlight_on;
+                    if (cat == 'clothing') iconData = Icons.shield;
+
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.4)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF59E0B).withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(iconData, color: const Color(0xFFFBBF24), size: 20),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      name,
+                                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                                    ),
+                                    if (serial != null && serial.isNotEmpty) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'SN / Barcode: $serial',
+                                        style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11, fontFamily: 'monospace'),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF59E0B).withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '${qty.toInt()}x Verliehen',
+                                  style: const TextStyle(color: Color(0xFFFBBF24), fontSize: 11, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0F172A),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.person, color: Color(0xFF38BDF8), size: 16),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    persNr != null ? '$recipient (Pers.-Nr. $persNr)' : recipient,
+                                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (desc != null && desc.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              desc,
+                              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11, fontStyle: FontStyle.italic),
+                            ),
+                          ],
+                          if (_canManageHandover) ...[
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Color(0xFF10B981)),
+                                  foregroundColor: const Color(0xFF10B981),
+                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
+                                icon: const Icon(Icons.assignment_return_outlined, size: 16),
+                                label: const Text('Rücknahme quittieren', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                onPressed: () => _showReturnEquipmentDialog(item),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  void _showIssueEquipmentDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _IssueEquipmentSheet(
+        warehouseId: widget.depot.id,
+        availableItems: _availableHandoverItems,
+        equipmentCatalog: _equipmentCatalog,
+        warehouseService: _warehouseService,
+        onSuccess: () {
+          _loadAllData();
+        },
+      ),
+    );
+  }
+
+  void _showReturnEquipmentDialog(Map<String, dynamic> item) async {
+    String returnStatus = 'Zurückgegeben';
+    final remarkCtrl = TextEditingController();
+    bool isSubmitting = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.assignment_return_outlined, color: Color(0xFF10B981), size: 22),
+              const SizedBox(width: 8),
+              const Text('Rücknahme quittieren', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item['name']?.toString() ?? 'Ausrüstung',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Von: ${item['issuedToName'] ?? "Mitarbeiter"}',
+                style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              const Text('Zustand des Gegenstands:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _returnStatusChip('Zurückgegeben', 'Einwandfrei', returnStatus, (s) => setDlgState(() => returnStatus = s), const Color(0xFF10B981)),
+                  const SizedBox(width: 8),
+                  _returnStatusChip('Beschädigt', 'Beschädigt', returnStatus, (s) => setDlgState(() => returnStatus = s), Colors.orange),
+                  const SizedBox(width: 8),
+                  _returnStatusChip('Verloren', 'Verloren', returnStatus, (s) => setDlgState(() => returnStatus = s), Colors.red),
+                ],
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: remarkCtrl,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'Bemerkung (optional)',
+                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                  filled: true,
+                  fillColor: const Color(0xFF0F172A),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Abbrechen', style: TextStyle(color: Colors.white60)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: returnStatus == 'Verloren' ? Colors.red.shade700 : const Color(0xFF10B981),
+              ),
+              onPressed: isSubmitting
+                  ? null
+                  : () async {
+                      setDlgState(() => isSubmitting = true);
+                      final zuweisungId = item['zuweisungId']?.toString() ?? item['id']?.toString() ?? '';
+                      final res = await _warehouseService.returnDepotItem(
+                        zuweisungId: zuweisungId,
+                        warehouseId: widget.depot.id,
+                        status: returnStatus,
+                        bemerkung: remarkCtrl.text.trim().isNotEmpty ? remarkCtrl.text.trim() : null,
+                      );
+                      if (ctx.mounted) {
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(res['message'] ?? 'Rücknahme verbucht.'),
+                            backgroundColor: res['success'] == true ? const Color(0xFF10B981) : Colors.red.shade700,
+                          ),
+                        );
+                        _loadAllData();
+                      }
+                    },
+              child: isSubmitting
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('Quittieren', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _returnStatusChip(String id, String label, String currentStatus, Function(String) onSelect, Color color) {
+    final isSelected = currentStatus == id;
+    return Expanded(
+      child: InkWell(
+        onTap: () => onSelect(id),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? color.withOpacity(0.25) : const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: isSelected ? color : const Color(0xFF334155)),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: isSelected ? color : Colors.white70,
+              fontSize: 11,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
+class _IssueEquipmentSheet extends StatefulWidget {
+  final String warehouseId;
+  final List<dynamic> availableItems;
+  final List<dynamic> equipmentCatalog;
+  final WarehouseService warehouseService;
+  final VoidCallback onSuccess;
 
+  const _IssueEquipmentSheet({
+    required this.warehouseId,
+    required this.availableItems,
+    required this.equipmentCatalog,
+    required this.warehouseService,
+    required this.onSuccess,
+  });
+
+  @override
+  State<_IssueEquipmentSheet> createState() => _IssueEquipmentSheetState();
+}
+
+class _IssueEquipmentSheetState extends State<_IssueEquipmentSheet> {
+  final TextEditingController _empSearchCtrl = TextEditingController();
+  final TextEditingController _remarkCtrl = TextEditingController();
+  final TextEditingController _qtyCtrl = TextEditingController(text: '1');
+
+  List<Map<String, dynamic>> _employeeSuggestions = [];
+  Map<String, dynamic>? _selectedEmployee;
+  bool _isSearchingEmp = false;
+  bool _isSubmitting = false;
+
+  String? _selectedProductId;
+  String? _selectedProductName;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialEmployees();
+    // Default product selection
+    if (widget.availableItems.isNotEmpty) {
+      final first = widget.availableItems.first as Map<String, dynamic>;
+      _selectedProductId = first['productId']?.toString();
+      _selectedProductName = first['name']?.toString();
+    } else if (widget.equipmentCatalog.isNotEmpty) {
+      final first = widget.equipmentCatalog.first as Map<String, dynamic>;
+      _selectedProductId = first['id']?.toString();
+      _selectedProductName = first['name']?.toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _empSearchCtrl.dispose();
+    _remarkCtrl.dispose();
+    _qtyCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadInitialEmployees() async {
+    setState(() => _isSearchingEmp = true);
+    final res = await widget.warehouseService.searchEmployees(warehouseId: widget.warehouseId);
+    if (mounted) {
+      setState(() {
+        _employeeSuggestions = res;
+        _isSearchingEmp = false;
+      });
+    }
+  }
+
+  Future<void> _onSearchChanged(String query) async {
+    setState(() => _isSearchingEmp = true);
+    final res = await widget.warehouseService.searchEmployees(query: query, warehouseId: widget.warehouseId);
+    if (mounted) {
+      setState(() {
+        _employeeSuggestions = res;
+        _isSearchingEmp = false;
+      });
+    }
+  }
+
+  Future<void> _submitIssue() async {
+    if (_isSubmitting) return;
+
+    if (_selectedProductId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bitte wählen Sie einen Ausrüstungsgegenstand aus.')),
+      );
+      return;
+    }
+
+    if (_selectedEmployee == null && _empSearchCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bitte wählen Sie einen Mitarbeiter aus.')),
+      );
+      return;
+    }
+
+    final qty = double.tryParse(_qtyCtrl.text.trim()) ?? 1.0;
+    final angId = _selectedEmployee?['id']?.toString() ?? '';
+
+    if (angId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bitte wählen Sie einen gültigen Mitarbeiter aus der Liste aus.')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    final res = await widget.warehouseService.issueDepotItem(
+      warehouseId: widget.warehouseId,
+      productId: _selectedProductId!,
+      angestellteId: angId,
+      quantity: qty,
+      bemerkung: _remarkCtrl.text.trim().isNotEmpty ? _remarkCtrl.text.trim() : null,
+    );
+
+    if (mounted) {
+      setState(() => _isSubmitting = false);
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res['message'] ?? 'Ausrüstung ausgegeben.'),
+          backgroundColor: res['success'] == true ? const Color(0xFF10B981) : Colors.red.shade700,
+        ),
+      );
+      if (res['success'] == true) {
+        widget.onSuccess();
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Combine available items and catalog for selection
+    final Map<String, String> productOptions = {};
+    for (var a in widget.availableItems) {
+      if (a is Map<String, dynamic>) {
+        final id = a['productId']?.toString();
+        final name = a['name']?.toString();
+        final qty = a['stockQuantity']?.toString();
+        if (id != null && name != null) {
+          productOptions[id] = qty != null ? '$name ($qty im Depot)' : name;
+        }
+      }
+    }
+    for (var c in widget.equipmentCatalog) {
+      if (c is Map<String, dynamic>) {
+        final id = c['id']?.toString();
+        final name = c['name']?.toString();
+        if (id != null && name != null && !productOptions.containsKey(id)) {
+          productOptions[id] = name;
+        }
+      }
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.handshake, color: Color(0xFFC084FC), size: 24),
+              const SizedBox(width: 10),
+              const Text(
+                'Ausrüstung vor Ort ausgeben',
+                style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white54),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Product Selector
+          const Text('Ausrüstungsgegenstand', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F172A),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF334155)),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _selectedProductId,
+                dropdownColor: const Color(0xFF1E293B),
+                isExpanded: true,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                icon: const Icon(Icons.arrow_drop_down, color: Color(0xFFC084FC)),
+                items: productOptions.entries.map((e) {
+                  return DropdownMenuItem<String>(
+                    value: e.key,
+                    child: Text(e.value, overflow: TextOverflow.ellipsis),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() {
+                      _selectedProductId = val;
+                      _selectedProductName = productOptions[val];
+                    });
+                  }
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Employee Search
+          const Text('Empfänger / Mitarbeiter', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _empSearchCtrl,
+            onChanged: _onSearchChanged,
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            decoration: InputDecoration(
+              hintText: 'Name oder Personalnummer suchen...',
+              hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+              prefixIcon: const Icon(Icons.search, color: Color(0xFFC084FC), size: 18),
+              suffixIcon: _isSearchingEmp
+                  ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFC084FC))))
+                  : null,
+              filled: true,
+              fillColor: const Color(0xFF0F172A),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF334155))),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // Suggestion list
+          Container(
+            height: 120,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F172A),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF334155)),
+            ),
+            child: _employeeSuggestions.isEmpty
+                ? Center(
+                    child: Text(
+                      _isSearchingEmp ? 'Lade Mitarbeiter...' : 'Kein Mitarbeiter gefunden',
+                      style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _employeeSuggestions.length,
+                    itemBuilder: (context, idx) {
+                      final emp = _employeeSuggestions[idx];
+                      final isSelected = _selectedEmployee?['id'] == emp['id'];
+                      final isToday = emp['heuteImDienst'] == true;
+
+                      return ListTile(
+                        dense: true,
+                        selected: isSelected,
+                        selectedTileColor: const Color(0xFF8B5CF6).withOpacity(0.2),
+                        leading: CircleAvatar(
+                          radius: 12,
+                          backgroundColor: isToday ? const Color(0xFF064E3B) : const Color(0xFF1E293B),
+                          child: Icon(
+                            Icons.person,
+                            size: 14,
+                            color: isToday ? const Color(0xFF10B981) : Colors.white60,
+                          ),
+                        ),
+                        title: Row(
+                          children: [
+                            Text(
+                              emp['name'] ?? '',
+                              style: TextStyle(
+                                color: isSelected ? const Color(0xFFC084FC) : Colors.white,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                fontSize: 12,
+                              ),
+                            ),
+                            if (isToday) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF064E3B),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                                child: const Text('Heute im Dienst', style: TextStyle(color: Color(0xFF10B981), fontSize: 9, fontWeight: FontWeight.bold)),
+                              ),
+                            ],
+                          ],
+                        ),
+                        subtitle: emp['personalnummer'] != null
+                            ? Text('Pers.-Nr: ${emp['personalnummer']}', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 10))
+                            : null,
+                        trailing: isSelected ? const Icon(Icons.check_circle, color: Color(0xFF8B5CF6), size: 16) : null,
+                        onTap: () {
+                          setState(() {
+                            _selectedEmployee = emp;
+                            _empSearchCtrl.text = emp['name'] ?? '';
+                          });
+                        },
+                      );
+                    },
+                  ),
+          ),
+          const SizedBox(height: 12),
+
+          Row(
+            children: [
+              SizedBox(
+                width: 90,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Menge', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: _qtyCtrl,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: const Color(0xFF0F172A),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF334155))),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Bemerkung (Posten / Anlass)', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: _remarkCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'z.B. Haupttor, Bühne...',
+                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                        filled: true,
+                        fillColor: const Color(0xFF0F172A),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF334155))),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          SizedBox(
+            width: double.infinity,
+            height: 46,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF8B5CF6),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              icon: _isSubmitting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.check, color: Colors.white),
+              label: Text(
+                _isSubmitting ? 'Wird verbucht...' : 'Ausgabe verbindlich buchen',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              onPressed: _isSubmitting ? null : _submitIssue,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

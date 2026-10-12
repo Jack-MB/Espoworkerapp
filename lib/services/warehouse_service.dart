@@ -278,4 +278,100 @@ class WarehouseService {
     final response = await http.post(url, headers: headers, body: body).timeout(_timeout);
     return response.statusCode == 200;
   }
+
+  /// Lädt alle zur Ausgabe/Rücknahme relevanten Daten eines Depots (ausgegebene Gegenstände, verfügbare Ausrüstung, Katalog).
+  Future<Map<String, dynamic>> getDepotHandover(String warehouseId) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/depotHandoverItems?warehouseId=$warehouseId');
+    final headers = await _getHeaders();
+
+    final response = await http.get(url, headers: headers).timeout(_timeout);
+    if (response.statusCode == 200) {
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      return {
+        'canManage': data['canManage'] == true,
+        'issuedItems': (data['issuedItems'] as List?) ?? [],
+        'availableItems': (data['availableItems'] as List?) ?? [],
+        'equipmentCatalog': (data['equipmentCatalog'] as List?) ?? [],
+      };
+    } else {
+      throw Exception('Fehler beim Laden der Ausrüstungsdaten: Status ${response.statusCode}');
+    }
+  }
+
+  /// Sucht Mitarbeiter nach Name oder Personalnummer (mit Kennzeichnung 'Heute im Dienst').
+  Future<List<Map<String, dynamic>>> searchEmployees({String query = '', String? warehouseId}) async {
+    final uri = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/searchEmployees').replace(
+      queryParameters: {
+        if (query.isNotEmpty) 'q': query,
+        if (warehouseId != null) 'warehouseId': warehouseId,
+      },
+    );
+    final headers = await _getHeaders();
+
+    final response = await http.get(uri, headers: headers).timeout(_timeout);
+    if (response.statusCode == 200) {
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      if (data is Map && data['list'] is List) {
+        return List<Map<String, dynamic>>.from(data['list']);
+      }
+    }
+    return [];
+  }
+
+  /// Gibt Ausrüstung aus dem Depot an einen Mitarbeiter aus.
+  Future<Map<String, dynamic>> issueDepotItem({
+    required String warehouseId,
+    required String productId,
+    required String angestellteId,
+    double quantity = 1.0,
+    String? bemerkung,
+    String? inventoryNumberId,
+  }) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/issueDepotItem');
+    final headers = await _getHeaders();
+
+    final body = json.encode({
+      'warehouseId': warehouseId,
+      'productId': productId,
+      'angestellteId': angestellteId,
+      'quantity': quantity,
+      'bemerkung': bemerkung ?? 'Worker-App Ausgabe',
+      if (inventoryNumberId != null) 'inventoryNumberId': inventoryNumberId,
+    });
+
+    final response = await http.post(url, headers: headers, body: body).timeout(_timeout);
+    final data = json.decode(utf8.decode(response.bodyBytes));
+    if (response.statusCode == 200) {
+      return {'success': true, 'message': data['message'] ?? 'Erfolgreich ausgegeben.'};
+    } else {
+      return {'success': false, 'message': data['errorMessage'] ?? data['error'] ?? 'Fehler bei der Ausgabe (Status ${response.statusCode})'};
+    }
+  }
+
+  /// Quittiert die Rücknahme von Ausrüstung zurück ins Depot.
+  Future<Map<String, dynamic>> returnDepotItem({
+    required String zuweisungId,
+    String? warehouseId,
+    String status = 'Zurückgegeben',
+    String? bemerkung,
+  }) async {
+    final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/returnDepotItem');
+    final headers = await _getHeaders();
+
+    final body = json.encode({
+      'zuweisungId': zuweisungId,
+      if (warehouseId != null) 'warehouseId': warehouseId,
+      'status': status,
+      'bemerkung': bemerkung ?? 'Worker-App Rücknahme',
+    });
+
+    final response = await http.post(url, headers: headers, body: body).timeout(_timeout);
+    final data = json.decode(utf8.decode(response.bodyBytes));
+    if (response.statusCode == 200) {
+      return {'success': true, 'message': data['message'] ?? 'Erfolgreich zurückgenommen.'};
+    } else {
+      return {'success': false, 'message': data['errorMessage'] ?? data['error'] ?? 'Fehler bei der Rücknahme (Status ${response.statusCode})'};
+    }
+  }
 }
+

@@ -28,7 +28,6 @@ import 'krankentage_screen.dart';
 import 'document_list_screen.dart';
 import 'login_screen.dart';
 import 'angestellte_profile_screen.dart';
-import 'angestellte_list_screen.dart';
 import 'notifications_screen.dart';
 import 'abwesenheit_screen.dart';
 import 'abwesenheiten_hub_screen.dart';
@@ -2980,9 +2979,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                     }),
                   _buildDrawerItem(Icons.calendar_month, 'Meetings', () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const MeetingListScreen()));
-                  }),
-                  _buildDrawerItem(Icons.people, 'Kollegen & Mitarbeiter', () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AngestellteListScreen()));
                   }),
                   const Divider(color: Colors.white24, height: 16),
                   _buildDrawerItem(Icons.access_time_filled, 'Arbeitszeitkonto', () {
