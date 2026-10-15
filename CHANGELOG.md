@@ -5,6 +5,22 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [1.3.21+47] - 2026-10-15
+
+### Fixed & Enhanced (Geofencing & ServiceObject-Synchronisation)
+- **Korrektur der Objektkoordinaten-API (`api_service.dart`)**:
+  - `getObjektCoordinates()` ruft primär die korrekte EspoCRM-Entität `ServiceObject` (`/ServiceObject/$id?select=latitude,longitude,geofenceRadius,addressStreet,addressCity,addressPostalCode`) ab (zuvor fehlerhafter Endpunkt `Objekte` mit 404).
+  - Automatischer Fallback auf Legacy-Objekte für Abwärtskompatibilität.
+  - Sichere Extraktion von `latitude`/`latk`, `longitude`/`lonK` und `geofenceRadius`/`rad` mit dynamischer Sanitization von Tausender- und Dezimaltrennzeichen.
+- **Slot-Modell (`slot.dart`)**:
+  - Attribute `geofenceRadius` und `rad` hinzugefügt und in `fromJson`, `copyWith` und Konstruktor verankert.
+  - Schichten führen den definierten Check-in-Radius des Service-Objekts direkt per Foreign Field mit.
+- **Geofence-Prüfung (`location_service.dart`)**:
+  - `checkGeofence()` nutzt primär `slot.geofenceRadius` bzw. `slot.rad` mit Default 50m.
+  - Beseitigung unnötiger API-Calls bei direkt am Slot vorhandenen Geodaten.
+
+---
+
 ## [1.3.20+46] - 2026-10-12
 
 ### Added

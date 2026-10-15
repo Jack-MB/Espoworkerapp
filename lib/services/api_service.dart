@@ -247,23 +247,31 @@ class ApiService {
   Future<Map<String, dynamic>?> getObjektCoordinates(String id) async {
     final cacheKey = 'cached_objekt_coords_$id';
     try {
-      final url = Uri.parse('${ServerConfig().apiUrl}/Objekte/$id?select=latk,lonK,rad');
-      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      // 1. Primär: ServiceObject (EspoCRM Standard-Entität)
+      var url = Uri.parse('${ServerConfig().apiUrl}/ServiceObject/$id?select=latitude,longitude,geofenceRadius,addressStreet,addressCity,addressPostalCode');
+      var response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+
+      if (response.statusCode != 200) {
+        // 2. Fallback: Objekte (Legacy)
+        url = Uri.parse('${ServerConfig().apiUrl}/Objekte/$id?select=latk,lonK,rad,latitude,longitude,geofenceRadius');
+        response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      }
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final latVal = data['latk'];
-        final lonVal = data['lonK'];
-        final radVal = data['rad'];
+        final latVal = data['latitude'] ?? data['latk'];
+        final lonVal = data['longitude'] ?? data['lonK'];
+        final radVal = data['geofenceRadius'] ?? data['rad'];
         
         if (latVal != null && lonVal != null) {
           final lat = double.tryParse(latVal.toString().replaceAll(',', ''));
           final lon = double.tryParse(lonVal.toString().replaceAll(',', ''));
           
-          int parsedRad = 30;
+          int parsedRad = 50;
           if (radVal != null) {
             // Robust parsing of integer with possible thousands separators (.)
             final sanitizedRad = radVal.toString().replaceAll('.', '').replaceAll(',', '');
-            parsedRad = int.tryParse(sanitizedRad) ?? 30;
+            parsedRad = int.tryParse(sanitizedRad) ?? 50;
           }
 
           if (lat != null && lon != null) {
@@ -298,7 +306,7 @@ class ApiService {
   Future<Slot?> getSlotById(String id) async {
     final url = Uri.parse(
         '${ServerConfig().apiUrl}/Slots/$id'
-        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,color,kooperationspartnerId,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
+        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,color,kooperationspartnerId,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,geofenceRadius,rad,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
     final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Slot.fromJson(json.decode(response.body));

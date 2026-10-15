@@ -114,7 +114,7 @@ class LocationService {
       // 1. Zielkoordinaten und Erlaubten Radius bestimmen
       double? targetLat;
       double? targetLon;
-      int allowedRadius = 30;
+      int allowedRadius = slot.geofenceRadius ?? slot.rad ?? 50;
 
       // Primäre Quelle: Objekt-Koordinaten
       if (slot.objekteId != null) {
@@ -123,7 +123,9 @@ class LocationService {
           if (coords != null) {
             targetLat = coords['latk'] as double?;
             targetLon = coords['lonK'] as double?;
-            allowedRadius = coords['rad'] as int? ?? 30;
+            if (coords['rad'] != null && (coords['rad'] as int) > 0) {
+              allowedRadius = coords['rad'] as int;
+            }
           }
         } catch (e) {
           debugPrint('LocationService: Fehler beim Laden der Objektkoordinaten: $e');

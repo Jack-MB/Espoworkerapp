@@ -28,6 +28,8 @@ class Slot {
   final String? firmaort;
   final double? latk;
   final double? lonK;
+  final int? geofenceRadius;
+  final int? rad;
   final String? bewacherID;
   final String? personalausweisnummer;
   final bool? kleidung;
@@ -83,6 +85,8 @@ class Slot {
     this.firmaort,
     this.latk,
     this.lonK,
+    this.geofenceRadius,
+    this.rad,
     this.bewacherID,
     this.personalausweisnummer,
     this.kleidung,
@@ -129,6 +133,8 @@ class Slot {
       stundenanzahl: _parseDouble(json['stundenanzahl']),
       latk: _parseDouble(json['latk']),
       lonK: _parseDouble(json['lonK']),
+      geofenceRadius: int.tryParse(json['geofenceRadius']?.toString() ?? '') ?? int.tryParse(json['rad']?.toString() ?? ''),
+      rad: int.tryParse(json['rad']?.toString() ?? '') ?? int.tryParse(json['geofenceRadius']?.toString() ?? ''),
       bewacherID: json['bewacherID'],
       personalausweisnummer: json['personalausweisnummer'],
       kleidung: json['kleidung'] == true,
@@ -175,6 +181,8 @@ class Slot {
     String? firmaort,
     double? latk,
     double? lonK,
+    int? geofenceRadius,
+    int? rad,
     String? bewacherID,
     String? personalausweisnummer,
     bool? kleidung,
@@ -219,6 +227,8 @@ class Slot {
       firmaort: firmaort ?? this.firmaort,
       latk: latk ?? this.latk,
       lonK: lonK ?? this.lonK,
+      geofenceRadius: geofenceRadius ?? this.geofenceRadius,
+      rad: rad ?? this.rad,
       bewacherID: bewacherID ?? this.bewacherID,
       personalausweisnummer: personalausweisnummer ?? this.personalausweisnummer,
       kleidung: kleidung ?? this.kleidung,
