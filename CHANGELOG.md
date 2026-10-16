@@ -5,9 +5,9 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
-## [1.3.21+47] - 2026-10-15
+## [1.3.21+47] - 2026-10-16
 
-### Fixed & Enhanced (Geofencing & ServiceObject-Synchronisation)
+### Fixed & Enhanced (Geofencing, ServiceObject-Synchronisation & Release)
 - **Korrektur der Objektkoordinaten-API (`api_service.dart`)**:
   - `getObjektCoordinates()` ruft primär die korrekte EspoCRM-Entität `ServiceObject` (`/ServiceObject/$id?select=latitude,longitude,geofenceRadius,addressStreet,addressCity,addressPostalCode`) ab (zuvor fehlerhafter Endpunkt `Objekte` mit 404).
   - Automatischer Fallback auf Legacy-Objekte für Abwärtskompatibilität.
@@ -18,6 +18,11 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 - **Geofence-Prüfung (`location_service.dart`)**:
   - `checkGeofence()` nutzt primär `slot.geofenceRadius` bzw. `slot.rad` mit Default 50m.
   - Beseitigung unnötiger API-Calls bei direkt am Slot vorhandenen Geodaten.
+- **Release-Build & Deployment**:
+  - Kompilierung von Android Release APK (`app-worker-release.apk`) und Web-PWA.
+  - Bereitstellung unter permanentem Download-Link `https://mb-scc.net/downloads/MB-Worker-latest.apk` und versioniert `MB-Worker-v1.3.21.apk`.
+  - OTA-Metadaten in `AppUpdate.php` synchronisiert (Build 47, Version 1.3.21, SHA256).
+  - Einbettung des permanenten Download-Links und QR-Codes in die mobile Leitstelle (`#Kommunikation`).
 
 ---
 
