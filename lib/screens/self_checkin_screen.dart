@@ -198,7 +198,23 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
         return isSlotOnLocalDate(s.dateStart, s.dateEnd, now);
       }).toList();
 
-      relevantSlots.sort((a, b) => (a.dateStart ?? '').compareTo(b.dateStart ?? ''));
+      relevantSlots.sort((a, b) {
+        DateTime aStart = DateTime(1970);
+        if (a.dateStart != null && a.dateStart!.isNotEmpty) {
+          try {
+            aStart = espoDateToLocal(a.dateStart!);
+          } catch (_) {}
+        }
+        DateTime bStart = DateTime(1970);
+        if (b.dateStart != null && b.dateStart!.isNotEmpty) {
+          try {
+            bStart = espoDateToLocal(b.dateStart!);
+          } catch (_) {}
+        }
+        final cmp = aStart.compareTo(bStart);
+        if (cmp != 0) return cmp;
+        return a.name.compareTo(b.name);
+      });
 
       // Backend-Werte in lokale Ampel-Map übernehmen
       for (final s in relevantSlots) {
@@ -269,16 +285,37 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
       }
     }
 
-    if (_searchQuery.isEmpty) return baseList;
+    if (_searchQuery.isNotEmpty) {
+      baseList = baseList.where((s) {
+        final nameMatch = s.name.toLowerCase().contains(_searchQuery);
+        final objMatch = s.objekteName?.toLowerCase().contains(_searchQuery) ?? false;
+        final empMatch = s.angestellteName?.toLowerCase().contains(_searchQuery) ?? false;
+        final posMatch = s.positionsname?.toLowerCase().contains(_searchQuery) ?? false;
+        final onrMatch = s.oNr?.toLowerCase().contains(_searchQuery) ?? false;
+        return nameMatch || objMatch || empMatch || posMatch || onrMatch;
+      }).toList();
+    }
 
-    return baseList.where((s) {
-      final nameMatch = s.name.toLowerCase().contains(_searchQuery);
-      final objMatch = s.objekteName?.toLowerCase().contains(_searchQuery) ?? false;
-      final empMatch = s.angestellteName?.toLowerCase().contains(_searchQuery) ?? false;
-      final posMatch = s.positionsname?.toLowerCase().contains(_searchQuery) ?? false;
-      final onrMatch = s.oNr?.toLowerCase().contains(_searchQuery) ?? false;
-      return nameMatch || objMatch || empMatch || posMatch || onrMatch;
-    }).toList();
+    // Sortierung wie in Schichten: Chronologisch nach Schichtbeginn (Beginnzeit)
+    baseList.sort((a, b) {
+      DateTime aStart = DateTime(1970);
+      if (a.dateStart != null && a.dateStart!.isNotEmpty) {
+        try {
+          aStart = espoDateToLocal(a.dateStart!);
+        } catch (_) {}
+      }
+      DateTime bStart = DateTime(1970);
+      if (b.dateStart != null && b.dateStart!.isNotEmpty) {
+        try {
+          bStart = espoDateToLocal(b.dateStart!);
+        } catch (_) {}
+      }
+      final cmp = aStart.compareTo(bStart);
+      if (cmp != 0) return cmp;
+      return a.name.compareTo(b.name);
+    });
+
+    return baseList;
   }
 
   int get _mySlotsCount => _allRelevantSlots.where((s) => s.angestellteId == _currentAngestellteId).length;
@@ -972,7 +1009,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     return hasOnr || canEdit;
   }
 
-  /// Öffnet ein modales Sheet zur Mitarbeiterauswahl für eine Schicht (gefiltert nach Kooperationspartner)
+  /// Öffnet ein modales Sheet zur Mitarbeiterauswahl / Schichttausch / Springer-Eingabe
   Future<void> _showEmployeeSelectionSheet(Slot slot) async {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -985,9 +1022,17 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
         return _EmployeeSelectionSheet(
           slot: slot,
           isDark: isDark,
-          onEmployeeSelected: (empId, empName, {kpId}) async {
+          onEmployeeSelected: (empId, empName, {kpId, freierName, bewacherId, oNr}) async {
             Navigator.pop(sheetContext);
-            await _assignEmployee(slot, empId, empName, kooperationspartnerId: kpId);
+            await _assignEmployee(
+              slot,
+              empId,
+              empName,
+              kooperationspartnerId: kpId,
+              freierMitarbeiterName: freierName,
+              bewacherId: bewacherId,
+              oNr: oNr,
+            );
           },
           onRemoveAssignment: () async {
             Navigator.pop(sheetContext);
@@ -1003,12 +1048,18 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     String? angestellteId,
     String? angestellteName, {
     String? kooperationspartnerId,
+    String? freierMitarbeiterName,
+    String? bewacherId,
+    String? oNr,
   }) async {
     try {
       final res = await _api.assignEmployeeToSlot(
         slotId: slot.id,
         angestellteId: angestellteId,
         kooperationspartnerId: kooperationspartnerId,
+        freierMitarbeiterName: freierMitarbeiterName,
+        bewacherId: bewacherId,
+        oNr: oNr,
       );
 
       if (res['success'] == true) {
@@ -1017,10 +1068,14 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
           final idx = _allRelevantSlots.indexWhere((s) => s.id == slot.id);
           if (idx != -1) {
             final isP = res['isPartner'] == true;
+            final effectiveName = freierMitarbeiterName ?? angestellteName ?? (res['angestellteName'] as String?) ?? '';
             _allRelevantSlots[idx] = _allRelevantSlots[idx].copyWith(
               angestellteId: angestellteId,
-              angestellteName: angestellteName ?? '',
-              oNr: res['oNr']?.toString() ?? _allRelevantSlots[idx].oNr,
+              angestellteName: effectiveName,
+              bewacherID: res['bewacherId']?.toString() ?? bewacherId ?? _allRelevantSlots[idx].bewacherID,
+              ersatzNotiz: res['ersatzNotiz']?.toString() ?? _allRelevantSlots[idx].ersatzNotiz,
+              isManualSpringer: freierMitarbeiterName != null && freierMitarbeiterName.isNotEmpty,
+              oNr: res['oNr']?.toString() ?? oNr ?? _allRelevantSlots[idx].oNr,
               kooperationspartnerId: res['kooperationspartnerId'] ?? kooperationspartnerId ?? _allRelevantSlots[idx].kooperationspartnerId,
               kooperationspartnerName: res['kooperationspartnerName'] ?? _allRelevantSlots[idx].kooperationspartnerName,
               isPartner: res['isPartner'] != null ? isP : (kooperationspartnerId != null && kooperationspartnerId != '69e9f2a93910fbbbc' && kooperationspartnerId != '6a05b9091aed30701' && kooperationspartnerId != '__ALL__'),
@@ -1030,11 +1085,13 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
         });
 
         _showSuccessSnackbar(
-          angestellteId != null
-              ? (slot.angestellteId != null && slot.angestellteId != angestellteId
-                  ? '🔄 Vor-Ort-Austausch: $angestellteName zugewiesen'
-                  : '✅ $angestellteName erfolgreich zugewiesen')
-              : '✅ Mitarbeiter-Zuweisung entfernt',
+          freierMitarbeiterName != null && freierMitarbeiterName.isNotEmpty
+              ? '✅ Springer „$freierMitarbeiterName“ erfolgreich eingetragen'
+              : (angestellteId != null
+                  ? (slot.angestellteId != null && slot.angestellteId != angestellteId
+                      ? '🔄 Vor-Ort-Austausch: $angestellteName zugewiesen'
+                      : '✅ $angestellteName erfolgreich zugewiesen')
+                  : '✅ Mitarbeiter-Zuweisung entfernt'),
         );
 
         // Hintergrund-Aktualisierung
@@ -1744,23 +1801,66 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                slot.angestellteName!,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                  color: isDark ? Colors.white : AppConstants.primaryColor,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
-                                Text(
-                                  'Firma: ${slot.kooperationspartnerName}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: isDark ? Colors.white60 : Colors.grey.shade600,
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      slot.angestellteName!,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                        color: isDark ? Colors.white : AppConstants.primaryColor,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
-                                  overflow: TextOverflow.ellipsis,
+                                  if (slot.isSpringer) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.amber.withOpacity(0.18),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(color: Colors.amber.shade700, width: 0.8),
+                                      ),
+                                      child: const Text(
+                                        'SPRINGER',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w800,
+                                          color: Colors.amber,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              if (slot.bewacherID != null && slot.bewacherID!.trim().isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    'Bewacher-ID: ${slot.bewacherID}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      fontFamily: 'monospace',
+                                      color: isDark ? Colors.cyanAccent : Colors.teal.shade700,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 1),
+                                  child: Text(
+                                    'Firma: ${slot.kooperationspartnerName}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: isDark ? Colors.white60 : Colors.grey.shade600,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                             ],
                           ),
@@ -2096,7 +2196,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
 class _EmployeeSelectionSheet extends StatefulWidget {
   final Slot slot;
   final bool isDark;
-  final Function(String empId, String empName, {String? kpId}) onEmployeeSelected;
+  final Function(String? empId, String empName, {String? kpId, String? freierName, String? bewacherId, String? oNr}) onEmployeeSelected;
   final VoidCallback onRemoveAssignment;
 
   const _EmployeeSelectionSheet({
@@ -2113,6 +2213,15 @@ class _EmployeeSelectionSheet extends StatefulWidget {
 class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
   final ApiService _api = ApiService();
   final TextEditingController _searchCtrl = TextEditingController();
+
+  // Tab: 0 = Aus Liste wählen, 1 = Freier Name / Springer
+  int _currentTab = 0;
+
+  // Controller für Springer
+  final _springerFormKey = GlobalKey<FormState>();
+  final _freierNameCtrl = TextEditingController();
+  final _bewacherIdCtrl = TextEditingController();
+  final _oNrCtrl = TextEditingController();
 
   bool _isLoading = true;
   String? _error;
@@ -2133,6 +2242,14 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
       _selectedKpId = initialKpId;
       _kpName = widget.slot.kooperationspartnerName;
     }
+
+    if (widget.slot.oNr != null && widget.slot.oNr!.isNotEmpty) {
+      _oNrCtrl.text = widget.slot.oNr!;
+    }
+    if (widget.slot.bewacherID != null && widget.slot.bewacherID!.isNotEmpty) {
+      _bewacherIdCtrl.text = widget.slot.bewacherID!;
+    }
+
     _loadPartners();
     _fetchEmployees();
   }
@@ -2151,12 +2268,16 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _freierNameCtrl.dispose();
+    _bewacherIdCtrl.dispose();
+    _oNrCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _loadPartners() async {
     try {
       final partners = await _api.getKooperationspartner();
+      partners.sort((a, b) => ((a['name'] as String?) ?? '').toLowerCase().compareTo(((b['name'] as String?) ?? '').toLowerCase()));
       if (mounted) {
         setState(() {
           _partners = partners;
@@ -2181,6 +2302,13 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
       );
 
       final list = (res['list'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
+      // Alphabetisch nach Name sortieren
+      list.sort((a, b) {
+        final aName = (a['name'] as String? ?? '').toLowerCase();
+        final bName = (b['name'] as String? ?? '').toLowerCase();
+        return aName.compareTo(bName);
+      });
+
       final kpName = res['kooperationspartnerName'] as String?;
 
       if (!mounted) return;
@@ -2223,10 +2351,11 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final isDark = widget.isDark;
-    final hasCurrentEmployee = widget.slot.angestellteId != null && widget.slot.angestellteId!.isNotEmpty;
+    final hasCurrentEmployee = (widget.slot.angestellteId != null && widget.slot.angestellteId!.isNotEmpty) ||
+        (widget.slot.angestellteName != null && widget.slot.angestellteName!.trim().isNotEmpty);
 
     return Container(
-      height: MediaQuery.of(context).size.height * 0.82,
+      height: MediaQuery.of(context).size.height * 0.85,
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1E222B) : Colors.white,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
@@ -2255,7 +2384,7 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
           ),
           const SizedBox(height: 14),
 
-          // Header: Titel & Kooperationspartner
+          // Header: Titel & Schließen-Button
           Row(
             children: [
               Container(
@@ -2276,12 +2405,12 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Mitarbeiter zuweisen',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      'Mitarbeiter zuweisen / Tauschen',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Firma: ${_kpName ?? widget.slot.kooperationspartnerName ?? 'MB-SCC'}',
+                      'Firma: ${_kpName ?? widget.slot.kooperationspartnerName ?? 'MB-SCC (Intern)'}',
                       style: TextStyle(
                         fontSize: 12,
                         color: isDark ? Colors.white70 : Colors.grey.shade700,
@@ -2298,141 +2427,478 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
 
-          // Kooperationspartner Dropdown
+          // Tab-Umschalter: [ 👥 Aus Liste wählen ] | [ ✍️ Freier Name / Springer ]
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade300),
+              color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String?>(
-                value: _getEffectiveKpValue(),
-                isExpanded: true,
-                dropdownColor: isDark ? const Color(0xFF1E222B) : Colors.white,
-                hint: const Text('Alle Firmen / Intern (MB-SCC)'),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: '__ALL__',
-                    child: Text('🌐 Alle Firmen / Firmenübergreifend', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                  ),
-                  const DropdownMenuItem<String?>(
-                    value: '69e9f2a93910fbbbc',
-                    child: Text('🏢 MB-SCC (Intern)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  ),
-                  ..._partners
-                      .where((p) => p['id'] != '69e9f2a93910fbbbc' && p['id'] != '6a05b9091aed30701')
-                      .map((p) => DropdownMenuItem<String?>(
-                            value: p['id'] as String?,
-                            child: Text(
-                              '🤝 ${p['name'] as String? ?? 'Unbekannter Partner'}',
-                              style: const TextStyle(fontSize: 13),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          )),
-                ],
-                onChanged: (newKpId) {
-                  setState(() {
-                    _selectedKpId = newKpId;
-                    if (newKpId == '__ALL__') {
-                      _kpName = 'Alle Firmen';
-                    } else if (newKpId == '69e9f2a93910fbbbc' || newKpId == null) {
-                      _kpName = 'MB-SCC (Intern)';
-                    } else {
-                      final found = _partners.firstWhere((p) => p['id'] == newKpId, orElse: () => {});
-                      _kpName = found['name'] as String?;
-                    }
-                  });
-                  _fetchEmployees(search: _searchCtrl.text.trim());
-                },
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-
-          // Suchleiste mit Live-Suche
-          TextField(
-            controller: _searchCtrl,
-            onChanged: _onSearchChanged,
-            decoration: InputDecoration(
-              hintText: 'Nach Name, Personal-Nr. oder Ordner-Nr. suchen...',
-              hintStyle: TextStyle(fontSize: 13, color: isDark ? Colors.white38 : Colors.grey.shade500),
-              prefixIcon: const Icon(Icons.search, size: 20),
-              suffixIcon: _searchCtrl.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, size: 18),
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        _onSearchChanged('');
-                      },
-                    )
-                  : null,
-              filled: true,
-              fillColor: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: isDark ? Colors.cyanAccent : AppConstants.primaryColor, width: 1.5),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-
-          // Treffer-Anzahl & Schicht-Info
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  _isLoading
-                      ? 'Lade Mitarbeiter...'
-                      : '${_filteredEmployees.length} Mitarbeiter verfügbar',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white54 : Colors.grey.shade600,
-                  ),
-                ),
-                if (hasCurrentEmployee)
-                  InkWell(
-                    onTap: widget.onRemoveAssignment,
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      child: Row(
-                        children: [
-                          Icon(Icons.person_remove_outlined, size: 13, color: Colors.red.shade400),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Zuweisung aufheben',
-                            style: TextStyle(fontSize: 11, color: Colors.red.shade400, fontWeight: FontWeight.bold),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(() => _currentTab = 0),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _currentTab == 0
+                            ? (isDark ? Colors.cyanAccent.withOpacity(0.2) : Colors.white)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: _currentTab == 0
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.1),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                )
+                              ]
+                            : null,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '👥 Aus Liste wählen',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: _currentTab == 0 ? FontWeight.bold : FontWeight.w500,
+                            color: _currentTab == 0
+                                ? (isDark ? Colors.cyanAccent : AppConstants.primaryColor)
+                                : (isDark ? Colors.white60 : Colors.grey.shade700),
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
+                ),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(() => _currentTab = 1),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _currentTab == 1
+                            ? (isDark ? Colors.amber.withOpacity(0.25) : Colors.white)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: _currentTab == 1
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.1),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                )
+                              ]
+                            : null,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '✍️ Freier Name / Springer',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: _currentTab == 1 ? FontWeight.bold : FontWeight.w500,
+                            color: _currentTab == 1
+                                ? Colors.amber
+                                : (isDark ? Colors.white60 : Colors.grey.shade700),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
-          const Divider(height: 12),
+          const SizedBox(height: 12),
 
-          // Liste der Mitarbeiter
-          Expanded(
-            child: _buildListContent(isDark),
-          ),
+          // TAB-INHALTE
+          if (_currentTab == 0) ...[
+            // Kooperationspartner Dropdown
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade300),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: _getEffectiveKpValue(),
+                  isExpanded: true,
+                  dropdownColor: isDark ? const Color(0xFF1E222B) : Colors.white,
+                  hint: const Text('Alle Firmen / Intern (MB-SCC)'),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: '__ALL__',
+                      child: Text('🌐 Alle Firmen / Firmenübergreifend', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    ),
+                    const DropdownMenuItem<String?>(
+                      value: '69e9f2a93910fbbbc',
+                      child: Text('🏢 MB-SCC (Intern)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    ),
+                    ..._partners
+                        .where((p) => p['id'] != '69e9f2a93910fbbbc' && p['id'] != '6a05b9091aed30701')
+                        .map((p) => DropdownMenuItem<String?>(
+                              value: p['id'] as String?,
+                              child: Text(
+                                '🤝 ${p['name'] as String? ?? 'Unbekannter Partner'}',
+                                style: const TextStyle(fontSize: 13),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            )),
+                  ],
+                  onChanged: (newKpId) {
+                    setState(() {
+                      _selectedKpId = newKpId;
+                      if (newKpId == '__ALL__') {
+                        _kpName = 'Alle Firmen';
+                      } else if (newKpId == '69e9f2a93910fbbbc' || newKpId == null) {
+                        _kpName = 'MB-SCC (Intern)';
+                      } else {
+                        final found = _partners.firstWhere((p) => p['id'] == newKpId, orElse: () => {});
+                        _kpName = found['name'] as String?;
+                      }
+                    });
+                    _fetchEmployees(search: _searchCtrl.text.trim());
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Suchleiste mit Live-Suche
+            TextField(
+              controller: _searchCtrl,
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                hintText: 'Nach Name, Personal-Nr. oder Ordner-Nr. suchen...',
+                hintStyle: TextStyle(fontSize: 13, color: isDark ? Colors.white38 : Colors.grey.shade500),
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _searchCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _onSearchChanged('');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.cyanAccent : AppConstants.primaryColor, width: 1.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Treffer-Anzahl & Schicht-Info
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    _isLoading
+                        ? 'Lade Mitarbeiter...'
+                        : '${_filteredEmployees.length} Mitarbeiter verfügbar',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white54 : Colors.grey.shade600,
+                    ),
+                  ),
+                  if (hasCurrentEmployee)
+                    InkWell(
+                      onTap: widget.onRemoveAssignment,
+                      borderRadius: BorderRadius.circular(6),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        child: Row(
+                          children: [
+                            Icon(Icons.person_remove_outlined, size: 13, color: Colors.red.shade400),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Zuweisung aufheben',
+                              style: TextStyle(fontSize: 11, color: Colors.red.shade400, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 12),
+
+            // Liste der Mitarbeiter
+            Expanded(
+              child: _buildListContent(isDark),
+            ),
+          ] else ...[
+            // Tab 1: Freier Name / Springer Formular
+            Expanded(
+              child: _buildSpringerForm(isDark, hasCurrentEmployee),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildSpringerForm(bool isDark, bool hasCurrentEmployee) {
+    return SingleChildScrollView(
+      child: Form(
+        key: _springerFormKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 4),
+            // Info Banner
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.amber.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.amber.withOpacity(0.35)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline, color: Colors.amber, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Für externe Aushilfen, Springer oder Partner-Personal ohne hinterlegtes Profil. Name und Bewacher-ID werden auf der Schicht und im Wachbuch dokumentiert.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: isDark ? Colors.amber.shade200 : Colors.amber.shade900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Firma / Kooperationspartner Dropdown
+            Text(
+              'Firma / Arbeitgeber',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.grey.shade700),
+            ),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade300),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: _getEffectiveKpValue() == '__ALL__' ? '69e9f2a93910fbbbc' : _getEffectiveKpValue(),
+                  isExpanded: true,
+                  dropdownColor: isDark ? const Color(0xFF1E222B) : Colors.white,
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: '69e9f2a93910fbbbc',
+                      child: Text('🏢 MB-SCC (Intern)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    ),
+                    ..._partners
+                        .where((p) => p['id'] != '69e9f2a93910fbbbc' && p['id'] != '6a05b9091aed30701')
+                        .map((p) => DropdownMenuItem<String?>(
+                              value: p['id'] as String?,
+                              child: Text(
+                                '🤝 ${p['name'] as String? ?? 'Unbekannter Partner'}',
+                                style: const TextStyle(fontSize: 13),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            )),
+                  ],
+                  onChanged: (newKpId) {
+                    setState(() {
+                      _selectedKpId = newKpId;
+                      if (newKpId == '69e9f2a93910fbbbc' || newKpId == null) {
+                        _kpName = 'MB-SCC (Intern)';
+                      } else {
+                        final found = _partners.firstWhere((p) => p['id'] == newKpId, orElse: () => {});
+                        _kpName = found['name'] as String?;
+                      }
+                    });
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Vor- und Nachname (Pflicht)
+            Text(
+              'Vor- und Nachname des Springers *',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.grey.shade700),
+            ),
+            const SizedBox(height: 6),
+            TextFormField(
+              controller: _freierNameCtrl,
+              textCapitalization: TextCapitalization.words,
+              style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: 'z. B. Max Mustermann',
+                hintStyle: TextStyle(fontSize: 13, color: isDark ? Colors.white38 : Colors.grey.shade500),
+                prefixIcon: const Icon(Icons.person_add_rounded, size: 20),
+                filled: true,
+                fillColor: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Colors.amber, width: 1.5),
+                ),
+              ),
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'Bitte Vor- und Nachnamen eingeben' : null,
+            ),
+            const SizedBox(height: 14),
+
+            // Bewacher-ID (BWR-Nummer)
+            Text(
+              'Bewacher-ID / Bewachungsregister-Nr.',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.grey.shade700),
+            ),
+            const SizedBox(height: 6),
+            TextFormField(
+              controller: _bewacherIdCtrl,
+              style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: 'z. B. B-12345678 (BWR-ID)',
+                hintStyle: TextStyle(fontSize: 13, color: isDark ? Colors.white38 : Colors.grey.shade500),
+                prefixIcon: const Icon(Icons.badge_rounded, size: 20),
+                filled: true,
+                fillColor: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Colors.amber, width: 1.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Ordner-Nr. (O-NR)
+            Text(
+              'Ordner-Nummer (O-NR)',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.grey.shade700),
+            ),
+            const SizedBox(height: 6),
+            TextFormField(
+              controller: _oNrCtrl,
+              keyboardType: TextInputType.text,
+              style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: 'z. B. 042 (optional)',
+                hintStyle: TextStyle(fontSize: 13, color: isDark ? Colors.white38 : Colors.grey.shade500),
+                prefixIcon: const Icon(Icons.tag_rounded, size: 20),
+                filled: true,
+                fillColor: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Colors.amber, width: 1.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Zuweisen-Button
+            ElevatedButton.icon(
+              onPressed: () {
+                if (_springerFormKey.currentState?.validate() ?? false) {
+                  final name = _freierNameCtrl.text.trim();
+                  final bId = _bewacherIdCtrl.text.trim();
+                  final onr = _oNrCtrl.text.trim();
+                  final kpId = (_selectedKpId == '__ALL__' || _selectedKpId == null)
+                      ? '69e9f2a93910fbbbc'
+                      : _selectedKpId;
+
+                  widget.onEmployeeSelected(
+                    null,
+                    name,
+                    kpId: kpId,
+                    freierName: name,
+                    bewacherId: bId.isNotEmpty ? bId : null,
+                    oNr: onr.isNotEmpty ? onr : null,
+                  );
+                }
+              },
+              icon: const Icon(Icons.check_circle_outline, size: 18),
+              label: const Text(
+                'Schicht Springer zuweisen',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 3,
+                shadowColor: const Color(0xFF10B981).withOpacity(0.5),
+              ),
+            ),
+            if (hasCurrentEmployee) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: widget.onRemoveAssignment,
+                icon: Icon(Icons.person_remove_outlined, size: 16, color: Colors.red.shade400),
+                label: Text(
+                  'Aktuelle Zuweisung aufheben',
+                  style: TextStyle(color: Colors.red.shade400, fontWeight: FontWeight.bold),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: Colors.red.shade400.withOpacity(0.4)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     );
   }

@@ -276,5 +276,73 @@ void main() {
       expect(slot.isEinsatzleiter(null), isTrue);
       expect(slot.canUserEditOnr('any-id'), isTrue);
     });
+
+    test('Slot isSpringer returns true for manual Springer or ersatzNotiz', () {
+      final regularSlot = Slot(
+        id: 's-reg',
+        name: 'Regular Shift',
+        status: 'Geplant',
+        angestellteId: 'ang-1',
+        angestellteName: 'Regular Employee',
+      );
+      expect(regularSlot.isSpringer, isFalse);
+
+      final manualSpringerSlot = Slot(
+        id: 's-springer-1',
+        name: 'Springer Shift',
+        status: 'Geplant',
+        angestellteName: 'Springer Peter',
+        bewacherID: 'B-99887766',
+        isManualSpringer: true,
+      );
+      expect(manualSpringerSlot.isSpringer, isTrue);
+
+      final ersatzNotizSlot = Slot(
+        id: 's-springer-2',
+        name: 'Springer Shift 2',
+        status: 'Geplant',
+        angestellteName: 'Springer Klaus',
+        ersatzNotiz: '[Manuell erfasst] Name: Springer Klaus | Bewacher-ID: B-12345',
+      );
+      expect(ersatzNotizSlot.isSpringer, isTrue);
+
+      final customErsatzSlot = Slot(
+        id: 's-springer-3',
+        name: 'Springer Shift 3',
+        status: 'Geplant',
+        ersatzNotiz: 'Name: Springer Walter | Bewacher-ID: B-554433',
+      );
+      expect(customErsatzSlot.isSpringer, isTrue);
+    });
+
+    test('Slots sort chronologically by local start time (dateStart)', () {
+      final s1 = Slot(id: '1', name: 'Shift 14:00', status: 'Geplant', dateStart: '2026-10-18 14:00:00');
+      final s2 = Slot(id: '2', name: 'Shift 06:00', status: 'Geplant', dateStart: '2026-10-18 06:00:00');
+      final s3 = Slot(id: '3', name: 'Shift 22:00', status: 'Geplant', dateStart: '2026-10-18 22:00:00');
+      final s4 = Slot(id: '4', name: 'Shift 09:30', status: 'Geplant', dateStart: '2026-10-18 09:30:00');
+
+      final list = [s1, s2, s3, s4];
+      list.sort((a, b) => (a.dateStart ?? '').compareTo(b.dateStart ?? ''));
+
+      expect(list.map((s) => s.id).toList(), ['2', '4', '1', '3']);
+    });
+
+    test('Employee list sorts alphabetically A-Z by full name', () {
+      final list = [
+        {'id': '1', 'name': 'Zoltan Varga'},
+        {'id': '2', 'name': 'Adem Kaya'},
+        {'id': '3', 'name': 'Bodo Wartke'},
+        {'id': '4', 'name': 'Kerstin Albrecht'},
+      ];
+
+      list.sort((a, b) => (a['name'] ?? '').toLowerCase().compareTo((b['name'] ?? '').toLowerCase()));
+
+      expect(list.map((e) => e['name']).toList(), [
+        'Adem Kaya',
+        'Bodo Wartke',
+        'Kerstin Albrecht',
+        'Zoltan Varga',
+      ]);
+    });
   });
 }

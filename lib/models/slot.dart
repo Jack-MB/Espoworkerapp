@@ -52,6 +52,10 @@ class Slot {
   final bool? isPartner; // Serverseitig ermittelt: Externe Partnerfirma
   final bool? isIntern; // Serverseitig ermittelt: Intern MB-SCC
   final bool? isEinsatzleiterServer; // Serverseitig ermittelt: Einsatzleiter oder Zuweisungs-Berechtigung
+  final String? ersatzNotiz; // Vor-Ort-Ersatz / Tausch / Springer-Notiz
+  final bool? isManualSpringer; // Manuell erfasster Springer ohne Profil
+
+  bool get isSpringer => isManualSpringer == true || (ersatzNotiz != null && ersatzNotiz!.trim().isNotEmpty);
 
   Slot({
     required this.id,
@@ -102,6 +106,8 @@ class Slot {
     this.neueobjektkleidung,
     this.neueobjektkleidunganmerkung,
     this.annahmeStatus,
+    this.ersatzNotiz,
+    this.isManualSpringer,
   });
 
   factory Slot.fromJson(Map<String, dynamic> json) {
@@ -147,13 +153,15 @@ class Slot {
       lonK: _parseDouble(json['lonK']),
       geofenceRadius: int.tryParse(json['geofenceRadius']?.toString() ?? '') ?? int.tryParse(json['rad']?.toString() ?? ''),
       rad: int.tryParse(json['rad']?.toString() ?? '') ?? int.tryParse(json['geofenceRadius']?.toString() ?? ''),
-      bewacherID: json['bewacherID'],
+      bewacherID: json['bewacherID'] ?? json['bewacherId'],
       personalausweisnummer: json['personalausweisnummer'],
       kleidung: json['kleidung'] == true,
       kleidungAnmerkungen: json['kleidungAnmerkungen']?.toString(),
       neueobjektkleidung: json['neueobjektkleidung']?.toString(),
       neueobjektkleidunganmerkung: json['neueobjektkleidunganmerkung']?.toString(),
       annahmeStatus: json['annahmeStatus']?.toString(),
+      ersatzNotiz: json['ersatzNotiz']?.toString(),
+      isManualSpringer: json['isManualSpringer'] == true || (json['ersatzNotiz'] != null && json['ersatzNotiz'].toString().contains('[Manuell erfasst]')),
     );
   }
 
@@ -206,6 +214,8 @@ class Slot {
     String? neueobjektkleidung,
     String? neueobjektkleidunganmerkung,
     String? annahmeStatus,
+    String? ersatzNotiz,
+    bool? isManualSpringer,
   }) {
     return Slot(
       id: id ?? this.id,
@@ -256,6 +266,8 @@ class Slot {
       neueobjektkleidung: neueobjektkleidung ?? this.neueobjektkleidung,
       neueobjektkleidunganmerkung: neueobjektkleidunganmerkung ?? this.neueobjektkleidunganmerkung,
       annahmeStatus: annahmeStatus ?? this.annahmeStatus,
+      ersatzNotiz: ersatzNotiz ?? this.ersatzNotiz,
+      isManualSpringer: isManualSpringer ?? this.isManualSpringer,
     );
   }
 

@@ -8,6 +8,8 @@ import '../models/email.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:intl/intl.dart';
 import '../core/server_config.dart';
+import '../core/constants.dart';
+import '../core/email_content_helper.dart';
 import 'email_compose_screen.dart';
 
 class EmailFolderItem {
@@ -131,80 +133,11 @@ class _EmailListScreenState extends State<EmailListScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.9,
-          maxChildSize: 0.9,
-          minChildSize: 0.5,
-          expand: false,
-          builder: (context, scrollController) {
-            return FutureBuilder<Email?>(
-              future: _apiService.getEmailDetails(emailSummary.id),
-              builder: (context, snapshot) {
-                final email = snapshot.data ?? emailSummary;
-                final isLoading = snapshot.connectionState == ConnectionState.waiting;
-                
-                final dateStr = email.dateSent ?? email.createdAt;
-                final dateObj = dateStr != null ? DateTime.tryParse(dateStr) : null;
-                final formattedDate = dateObj != null ? DateFormat('dd.MM.yyyy HH:mm').format(dateObj) : '-';
-
-                return Column(
-                  children: [
-                    AppBar(
-                      title: const Text('E-Mail'),
-                      automaticallyImplyLeading: false,
-                      actions: [
-                        IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
-                      ],
-                    ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        controller: scrollController,
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(email.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                const Text('Von: ', style: TextStyle(fontWeight: FontWeight.bold)),
-                                Expanded(child: Text(email.fromString ?? email.fromName ?? 'Unbekannt')),
-                              ],
-                            ),
-                            Row(
-                              children: [
-                                const Text('An: ', style: TextStyle(fontWeight: FontWeight.bold)),
-                                Expanded(child: Text(email.to ?? 'Unbekannt')),
-                              ],
-                            ),
-                            Text('Datum: $formattedDate', style: const TextStyle(color: Colors.grey)),
-                            const Divider(height: 32),
-                            if (isLoading)
-                              const Center(child: CircularProgressIndicator())
-                            else if (email.isHtml && email.body != null)
-                              Html(data: email.body!)
-                            else
-                              Text(email.bodyPlain ?? email.body ?? 'Kein Inhalt', style: const TextStyle(fontSize: 16)),
-
-                            // ── Anhänge ──────────────────────────────────
-                            if (!isLoading && email.attachments.isNotEmpty) ...[
-                              const Divider(height: 32),
-                              const Text('Anhänge', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                              const SizedBox(height: 8),
-                              ...email.attachments.map((att) => _AttachmentTile(attachment: att)),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              }
-            );
-          }
-        );
-      }
+      backgroundColor: Colors.transparent,
+      builder: (context) => _EmailDetailModal(
+        emailSummary: emailSummary,
+        apiService: _apiService,
+      ),
     );
   }
 
@@ -382,25 +315,487 @@ class _AttachmentTileState extends State<_AttachmentTile> {
   }
 
   Widget _fileTile(EmailAttachment att, BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     IconData icon;
+    Color iconColor;
     if (att.isPdf) {
-      icon = Icons.picture_as_pdf;
+      icon = Icons.picture_as_pdf_rounded;
+      iconColor = Colors.redAccent;
     } else if (att.isImage) {
-      icon = Icons.image;
+      icon = Icons.image_rounded;
+      iconColor = Colors.greenAccent;
+    } else if (att.isDoc) {
+      icon = Icons.description_rounded;
+      iconColor = Colors.blueAccent;
     } else {
-      icon = Icons.attach_file;
+      icon = Icons.attach_file_rounded;
+      iconColor = isDark ? Colors.cyanAccent : AppConstants.primaryColor;
     }
 
-    return Card(
+    final subtitleParts = <String>[];
+    if (att.type != null && att.type!.isNotEmpty) subtitleParts.add(att.type!);
+    if (att.formattedSize.isNotEmpty) subtitleParts.add(att.formattedSize);
+
+    return Container(
       margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade300),
+      ),
       child: ListTile(
         dense: true,
-        leading: Icon(icon, color: Theme.of(context).primaryColor),
-        title: Text(att.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: att.type != null ? Text(att.type!, style: const TextStyle(fontSize: 11)) : null,
-        trailing: const Icon(Icons.download, size: 20),
+        leading: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: iconColor, size: 20),
+        ),
+        title: Text(att.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        subtitle: subtitleParts.isNotEmpty
+            ? Text(subtitleParts.join(' • '), style: TextStyle(fontSize: 11, color: isDark ? Colors.white54 : Colors.grey.shade600))
+            : null,
+        trailing: _isDownloading
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : Icon(Icons.download_rounded, size: 20, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
         onTap: _open,
       ),
+    );
+  }
+}
+
+/// Detail-Modal für E-Mails mit Primus-Parser (HTML-Sanitization, Signatur-Abtrennung & Plaintext/Code-Modus)
+class _EmailDetailModal extends StatefulWidget {
+  final Email emailSummary;
+  final ApiService apiService;
+
+  const _EmailDetailModal({
+    required this.emailSummary,
+    required this.apiService,
+  });
+
+  @override
+  State<_EmailDetailModal> createState() => _EmailDetailModalState();
+}
+
+class _EmailDetailModalState extends State<_EmailDetailModal> {
+  late Future<Email?> _emailFuture;
+  String _viewMode = 'formatted'; // 'formatted' | 'plaintext' | 'raw_code'
+  bool _showLegalDisclaimer = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailFuture = widget.apiService.getEmailDetails(widget.emailSummary.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.9,
+      maxChildSize: 0.95,
+      minChildSize: 0.5,
+      expand: false,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E222B) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 16,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // Drag Handle
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+
+              // Header Bar
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        Icons.mail_outline_rounded,
+                        color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'E-Mail Depesche',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+
+              // Scrollable Content
+              Expanded(
+                child: FutureBuilder<Email?>(
+                  future: _emailFuture,
+                  builder: (context, snapshot) {
+                    final email = snapshot.data ?? widget.emailSummary;
+                    final isLoading = snapshot.connectionState == ConnectionState.waiting;
+                    final split = email.splitResult;
+
+                    return SingleChildScrollView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // 1. Betreff & View Mode Switcher
+                          Text(
+                            email.name,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: isDark ? Colors.white : Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+
+                          // View Mode Toggle Chips
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              _buildModeChip('formatted', '📄 Formatiert', isDark),
+                              _buildModeChip('plaintext', '📝 Klartext', isDark),
+                              _buildModeChip('raw_code', '💻 HTML-Code', isDark),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+
+                          // 2. Metadaten-Karte (Von, An, CC, Datum, Status)
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: isDark ? Colors.white.withOpacity(0.04) : Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildMetaRow('Von:', email.from, isDark, bold: true, highlight: true),
+                                if (email.to != null && email.to!.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  _buildMetaRow('An:', email.to!, isDark),
+                                ],
+                                if (email.cc != null && email.cc!.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  _buildMetaRow('CC:', email.cc!, isDark),
+                                ],
+                                const SizedBox(height: 6),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Datum: ${email.displayDate}',
+                                      style: TextStyle(fontSize: 11, color: isDark ? Colors.white54 : Colors.grey.shade600),
+                                    ),
+                                    if (email.status != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          email.status!.toUpperCase(),
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // 3. Anhänge
+                          if (!isLoading && email.attachments.isNotEmpty) ...[
+                            Row(
+                              children: [
+                                Icon(Icons.attach_file_rounded, size: 16, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Anhänge (${email.attachments.length}):',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            ...email.attachments.map((att) => _AttachmentTile(attachment: att)),
+                            const SizedBox(height: 16),
+                          ],
+
+                          const Divider(height: 1),
+                          const SizedBox(height: 16),
+
+                          // 4. Hauptnachricht & Code-Darstellung
+                          if (isLoading)
+                            const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+                          else ...[
+                            if (_viewMode == 'formatted') ...[
+                              Html(
+                                data: split.hasSignature
+                                    ? EmailContentHelper.sanitizeHtmlForTheme(split.messageBody, isDark: isDark)
+                                    : email.cleanHtml,
+                                style: {
+                                  "body": Style(
+                                    fontSize: FontSize(14.0),
+                                    color: isDark ? Colors.grey.shade200 : Colors.black87,
+                                    lineHeight: LineHeight.em(1.4),
+                                    margin: Margins.zero,
+                                    padding: HtmlPaddings.zero,
+                                  ),
+                                },
+                              ),
+                            ] else if (_viewMode == 'plaintext') ...[
+                              SelectableText(
+                                split.hasSignature ? EmailContentHelper.htmlToPlainText(split.messageBody) : email.cleanPlainText,
+                                style: TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 13,
+                                  color: isDark ? Colors.grey.shade100 : Colors.black87,
+                                  height: 1.45,
+                                ),
+                              ),
+                            ] else ...[
+                              // Raw HTML / MIME Inspector
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.white24),
+                                ),
+                                child: SelectableText(
+                                  email.body ?? email.bodyPlain ?? '(Kein Body-Code)',
+                                  style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 11,
+                                    color: Colors.greenAccent,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ),
+                            ],
+
+                            // 5. Separater Signatur- & Impressum-Block (wie Primus Tablet)
+                            if (split.hasSignature && split.signatureBody != null && _viewMode != 'raw_code') ...[
+                              const SizedBox(height: 20),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: isDark ? Colors.white.withOpacity(0.03) : Colors.amber.withOpacity(0.04),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: Colors.amber.shade700.withOpacity(0.3)),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(Icons.verified_rounded, color: Colors.amber.shade600, size: 16),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'AUTORISIERTE SIGNATUR // MB-SCC DOKUMENTENSICHERUNG',
+                                          style: TextStyle(
+                                            fontFamily: 'monospace',
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.amber.shade700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const Divider(height: 12),
+                                    if (email.isHtml)
+                                      Html(
+                                        data: EmailContentHelper.sanitizeHtmlForTheme(split.signatureBody!, isDark: isDark),
+                                        style: {
+                                          "body": Style(
+                                            fontSize: FontSize(12.0),
+                                            color: isDark ? Colors.grey.shade300 : Colors.black87,
+                                            lineHeight: LineHeight.em(1.35),
+                                            margin: Margins.zero,
+                                            padding: HtmlPaddings.zero,
+                                          ),
+                                        },
+                                      )
+                                    else
+                                      Text(
+                                        split.signatureBody!,
+                                        style: TextStyle(
+                                          fontFamily: 'monospace',
+                                          fontSize: 11,
+                                          color: isDark ? Colors.grey.shade300 : Colors.black87,
+                                          height: 1.35,
+                                        ),
+                                      ),
+
+                                    // Ausklappbarer Rechtshinweis / Compliance-Disclaimer
+                                    if (split.legalDisclaimer != null) ...[
+                                      const SizedBox(height: 8),
+                                      InkWell(
+                                        onTap: () => setState(() => _showLegalDisclaimer = !_showLegalDisclaimer),
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              _showLegalDisclaimer ? Icons.expand_less : Icons.expand_more,
+                                              size: 14,
+                                              color: isDark ? Colors.white54 : Colors.grey.shade600,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              _showLegalDisclaimer
+                                                  ? 'Rechtshinweis verbergen'
+                                                  : 'Rechtshinweis & Vertraulichkeit einblenden',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: isDark ? Colors.white54 : Colors.grey.shade600,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (_showLegalDisclaimer) ...[
+                                        const SizedBox(height: 6),
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: isDark ? Colors.black26 : Colors.grey.shade200,
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            split.legalDisclaimer!,
+                                            style: TextStyle(
+                                              fontFamily: 'monospace',
+                                              fontSize: 9.5,
+                                              color: isDark ? Colors.white38 : Colors.grey.shade700,
+                                              height: 1.3,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildModeChip(String mode, String label, bool isDark) {
+    final isSelected = _viewMode == mode;
+    final primary = isDark ? Colors.cyanAccent : AppConstants.primaryColor;
+
+    return ChoiceChip(
+      label: Text(label, style: TextStyle(fontSize: 11, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+      selected: isSelected,
+      onSelected: (val) {
+        if (val) setState(() => _viewMode = mode);
+      },
+      selectedColor: primary.withOpacity(0.18),
+      backgroundColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade100,
+      labelStyle: TextStyle(
+        color: isSelected ? primary : (isDark ? Colors.white70 : Colors.grey.shade800),
+      ),
+      side: BorderSide(
+        color: isSelected ? primary : (isDark ? Colors.white12 : Colors.grey.shade300),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+  }
+
+  Widget _buildMetaRow(String label, String value, bool isDark, {bool bold = false, bool highlight = false}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 36,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white60 : Colors.grey.shade700,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              color: highlight
+                  ? (isDark ? Colors.cyanAccent : AppConstants.primaryColor)
+                  : (isDark ? Colors.white : Colors.black87),
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
+        ),
+      ],
     );
   }
 }

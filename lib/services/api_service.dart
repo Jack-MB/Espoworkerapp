@@ -442,11 +442,14 @@ class ApiService {
   }
 
   /// Weist einer Schicht einen Mitarbeiter zu (oder entfernt die Zuweisung mit angestellteId: null)
-  /// Unterstützt auch das gleichzeitige Wechseln des Kooperationspartners.
+  /// Unterstützt auch das gleichzeitige Wechseln des Kooperationspartners sowie freie Namen/Springer.
   Future<Map<String, dynamic>> assignEmployeeToSlot({
     required String slotId,
     String? angestellteId,
     String? kooperationspartnerId,
+    String? freierMitarbeiterName,
+    String? bewacherId,
+    String? oNr,
   }) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Slots/action/assignEmployee');
     final headers = await _getHeaders();
@@ -454,6 +457,12 @@ class ApiService {
       'slotId': slotId,
       'angestellteId': angestellteId,
       if (kooperationspartnerId != null) 'kooperationspartnerId': kooperationspartnerId,
+      if (freierMitarbeiterName != null && freierMitarbeiterName.trim().isNotEmpty)
+        'freierMitarbeiterName': freierMitarbeiterName.trim(),
+      if (bewacherId != null && bewacherId.trim().isNotEmpty)
+        'bewacherId': bewacherId.trim(),
+      if (oNr != null && oNr.trim().isNotEmpty)
+        'oNr': oNr.trim(),
     });
 
     final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
@@ -464,7 +473,7 @@ class ApiService {
     throw Exception(data['message'] ?? 'Fehler beim Zuweisen des Mitarbeiters.');
   }
 
-  /// Lädt Liste aller aktiven Kooperationspartner (Accounts mit Kürzel)
+  /// Lädt Liste aller aktiven Kooperationspartner (Accounts vom Typ Kooperationspartner)
   Future<List<Map<String, dynamic>>> getKooperationspartner() async {
     try {
       final baseUri = Uri.parse(ServerConfig().apiUrl);
@@ -474,11 +483,11 @@ class ApiService {
         port: baseUri.hasPort ? baseUri.port : null,
         path: '${baseUri.path}/Account',
         queryParameters: {
-          'where[0][type]': 'isNotNull',
-          'where[0][attribute]': 'cKrzel',
-          'where[0][value]': '',
+          'where[0][type]': 'equals',
+          'where[0][attribute]': 'type',
+          'where[0][value]': 'Kooperationspartner',
           'select': 'id,name,cKrzel',
-          'maxSize': '100',
+          'maxSize': '200',
           'orderBy': 'name',
           'order': 'asc',
         },
@@ -487,7 +496,9 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['list'] != null) {
-          return List<Map<String, dynamic>>.from(data['list']);
+          final list = List<Map<String, dynamic>>.from(data['list']);
+          list.sort((a, b) => ((a['name'] as String?) ?? '').toLowerCase().compareTo(((b['name'] as String?) ?? '').toLowerCase()));
+          return list;
         }
       }
     } catch (e) {

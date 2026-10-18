@@ -5,6 +5,30 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [1.3.25+51] - 2026-10-18
+
+### Fixed & Enhanced (Chronologische Schicht-Sortierung, Strikter Kooperationspartner-Filter, Freier Springer & Primus E-Mail Parser)
+- **Chronologische Schicht-Sortierung (`self_checkin_screen.dart`, `Slots.php`)**:
+  - **Angleichung an Schichten-Screen**: Sowohl im Backend (`Slots.php::getActionCheckinSlots`) als auch im Frontend (`self_checkin_screen.dart`) werden alle Schichten nun strikt chronologisch nach Schichtbeginn (`COALESCE(s.beginintern, s.date_start) ASC`, lokale Beginnzeit via `espoDateToLocal`) sortiert. Das bisherige künstliche Splitten nach Status-Buckets wurde entfernt.
+  - **Alphabetische Sortierung im Tauschen-Sheet**: Mitarbeiter in `_EmployeeSelectionSheet` werden automatisch alphabetisch A-Z nach Name sortiert dargestellt.
+- **Strikter Filter auf Kooperationspartner (`api_service.dart`, `self_checkin_screen.dart`)**:
+  - **Ausschluss von Kunden und unvollständigen Datensätzen**: `getKooperationspartner()` filtert nun strikt auf `where[type] = 'Kooperationspartner'`. Zuvor wurden Kunden mit hinterlegtem `cKrzel` fälschlicherweise in der Firmenauswahl gelistet.
+  - **Strukturierte Auswahlliste**: Dropdown listet `🌐 Alle Firmen` (Filter), `🏢 MB-SCC (Intern)` an oberster Stelle sowie alle aktiven Kooperationspartner in alphabetischer Reihenfolge.
+- **Freier Name & Bewacher-ID für Springer (`self_checkin_screen.dart`, `slot.dart`, `Slots.php`)**:
+  - **Tab-Umschaltung im Mitarbeiterauswahlsheet**: Neues Segment `[ 👥 Aus Liste wählen ]` und `[ ✍️ Freier Name / Springer ]` ermöglicht Einsatzleitern vor Ort die Erfassung externer Sicherheitskräfte ohne hinterlegtes App-/CRM-Benutzerkonto.
+  - **Springer-Formular**: Erfassung von Vor- und Nachname (Pflicht), Bewacher-ID (BWR-Nummer), Ordner-Nummer (O-NR) und Firmenzugehörigkeit (MB-SCC oder Kooperationspartner).
+  - **DIN 77200 & Wachbuch-Dokumentation**: Speicherung in `slots.ersatz_notiz` im Standardformat `[Manuell erfasst] Name: ... | Bewacher-ID: ...` mit Protokollierung im Schichtverlauf.
+  - **Visuelle Kennzeichnung**: Schichtkarten zeigen auffällige bernsteinfarbene `[SPRINGER]`-Badges und heben die Bewacher-ID in Monospace-Schrift hervor.
+- **E-Mail Parser & Viewer analog zu Primus Tablet Suite (`email_list_screen.dart`, `email_content_helper.dart`, `email.dart`)**:
+  - **Portierung des Primus Email-Modals**: Neuer 3-Wege Ansichts-Umschalter (`📄 Formatiert`, `📝 Klartext`, `💻 HTML-Code`).
+  - **HTML-Sanitization & Dark-Theme-Anpassung**: `EmailContentHelper.sanitizeHtmlForTheme` bereinigt aggressive Inline-Styles, verhindert schwarze Schrift auf dunklem Grund und filtert Skripte heraus.
+  - **Intelligente Signatur- & Disclaimer-Trennung**: Trennt Hauptnachricht von autorisierten Signaturen (`AUTORISIERTE SIGNATUR // MB-SCC DOKUMENTENSICHERUNG`) und lagert rechtliche Disclaimer in ein-/ausklappbare Akkordeons aus.
+  - **Dateityp-Erkennung & direkter Download**: Eigene Badges für PDF, Bilder und Dokumente mit Formatierung der Dateigröße und direktem Download über `OpenFilex`.
+- **Unit- & Integrationstests (`test/email_parsing_test.dart`, `test/slot_employee_assignment_test.dart`)**:
+  - 8 neue Testfälle für HTML-Entity-Dekodierung, Plaintext-Konvertierung, Signatur-Splitter, Springer-Getter und alphabetische/chronologische Sortierung (insgesamt 66 bestandene Tests).
+
+---
+
 ## [1.3.24+50] - 2026-10-18
 
 ### Fixed & Enhanced (Live-Kopfzähler Partner vs. Intern, Vor-Ort-Mitarbeiter-Tausch & Admin-Erkennung)
