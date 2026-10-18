@@ -298,8 +298,8 @@ class _SlotsScreenState extends State<SlotsScreen> {
     final accountSet = <String>{};
 
     for (var s in slots) {
-      if (s.angestellteName != null && s.angestellteName!.isNotEmpty) {
-        angestellteSet.add(s.angestellteName!);
+      if (s.effectiveEmployeeName != null && s.effectiveEmployeeName!.isNotEmpty) {
+        angestellteSet.add(s.effectiveEmployeeName!);
       }
       if (s.objekteName != null && s.objekteName!.isNotEmpty) {
         objekteSet.add(s.objekteName!);
@@ -1055,7 +1055,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
         List<Slot> filtered = List.from(_allSlots);
 
     if (_selectedAngestellte != null) {
-      filtered = filtered.where((s) => s.angestellteName == _selectedAngestellte).toList();
+      filtered = filtered.where((s) => s.effectiveEmployeeName == _selectedAngestellte).toList();
     }
     if (_selectedObjekt != null) {
       filtered = filtered.where((s) => s.objekteName == _selectedObjekt).toList();
@@ -1689,24 +1689,119 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                               ),
                                             ],
                                             // Mitarbeiter / Kooperationspartner
-                                            if (slot.angestellteName != null) ...[
+                                            if (slot.effectiveEmployeeName != null) ...[
                                               const SizedBox(height: 2),
-                                              Row(
-                                                children: [
-                                                  Icon(Icons.person, size: 14, color: Colors.grey.shade600),
-                                                  const SizedBox(width: 4),
-                                                  Expanded(
-                                                    child: RichText(
-                                                      text: TextSpan(
-                                                        style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                                              Builder(
+                                                builder: (ctx) {
+                                                  final origName = slot.originalGeplantName;
+                                                  final effName = slot.effectiveEmployeeName!;
+                                                  final isSwapped = origName != null && origName.isNotEmpty && origName != effName;
+                                                  final isSpringer = slot.isSpringer;
+
+                                                  return Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      if (isSwapped)
+                                                        Padding(
+                                                          padding: const EdgeInsets.only(bottom: 1),
+                                                          child: Row(
+                                                            children: [
+                                                              Icon(Icons.person_outline, size: 13, color: Colors.grey.shade500),
+                                                              const SizedBox(width: 4),
+                                                              Expanded(
+                                                                child: Text(
+                                                                  'Geplant: $origName',
+                                                                  style: TextStyle(
+                                                                    fontSize: 11.5,
+                                                                    color: Colors.grey.shade500,
+                                                                    decoration: TextDecoration.lineThrough,
+                                                                  ),
+                                                                  overflow: TextOverflow.ellipsis,
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      Row(
                                                         children: [
-                                                          const TextSpan(text: 'Mitarbeiter: ', style: TextStyle(fontWeight: FontWeight.bold)),
-                                                          TextSpan(text: slot.angestellteName!),
+                                                          Icon(
+                                                            (isSwapped || isSpringer) ? Icons.swap_horiz_rounded : Icons.person,
+                                                            size: 14,
+                                                            color: (isSwapped || isSpringer)
+                                                                ? Colors.amber.shade800
+                                                                : Colors.grey.shade600,
+                                                          ),
+                                                          const SizedBox(width: 4),
+                                                          Expanded(
+                                                            child: Row(
+                                                              children: [
+                                                                Flexible(
+                                                                  child: RichText(
+                                                                    text: TextSpan(
+                                                                      style: TextStyle(
+                                                                        fontSize: 13,
+                                                                        color: (isSwapped || isSpringer)
+                                                                            ? Colors.amber.shade900
+                                                                            : Colors.grey.shade700,
+                                                                      ),
+                                                                      children: [
+                                                                        TextSpan(
+                                                                          text: (isSwapped || isSpringer) ? 'Ersatz: ' : 'Mitarbeiter: ',
+                                                                          style: const TextStyle(fontWeight: FontWeight.bold),
+                                                                        ),
+                                                                        TextSpan(
+                                                                          text: effName,
+                                                                          style: TextStyle(
+                                                                            fontWeight: (isSwapped || isSpringer) ? FontWeight.bold : FontWeight.normal,
+                                                                          ),
+                                                                        ),
+                                                                      ],
+                                                                    ),
+                                                                    overflow: TextOverflow.ellipsis,
+                                                                  ),
+                                                                ),
+                                                                if (isSpringer) ...[
+                                                                  const SizedBox(width: 5),
+                                                                  Container(
+                                                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                                                    decoration: BoxDecoration(
+                                                                      color: Colors.amber.withOpacity(0.18),
+                                                                      borderRadius: BorderRadius.circular(4),
+                                                                      border: Border.all(color: Colors.amber.shade700, width: 0.8),
+                                                                    ),
+                                                                    child: const Text(
+                                                                      'SPRINGER',
+                                                                      style: TextStyle(
+                                                                        fontSize: 8.5,
+                                                                        fontWeight: FontWeight.w800,
+                                                                        color: Colors.amber,
+                                                                        letterSpacing: 0.4,
+                                                                      ),
+                                                                    ),
+                                                                  ),
+                                                                ],
+                                                              ],
+                                                            ),
+                                                          ),
                                                         ],
                                                       ),
-                                                    ),
-                                                  ),
-                                                ],
+                                                      if (isSpringer && slot.bewacherID != null && slot.bewacherID!.isNotEmpty)
+                                                        Padding(
+                                                          padding: const EdgeInsets.only(left: 18, top: 1),
+                                                          child: Text(
+                                                            'BWR: ${slot.bewacherID}',
+                                                            style: TextStyle(
+                                                              fontSize: 10.5,
+                                                              fontWeight: FontWeight.w600,
+                                                              fontFamily: 'monospace',
+                                                              color: Colors.teal.shade700,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  );
+                                                },
                                               ),
                                                      if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty) ...[
                                               const SizedBox(height: 2),
@@ -2182,10 +2277,18 @@ class _SlotsScreenState extends State<SlotsScreen> {
                       ]),
                     ),
                   
-                  if (slot.angestellteName != null || slot.kooperationspartnerName != null || (slot.oNr != null && slot.oNr!.isNotEmpty)) ...[
+                  if (slot.effectiveEmployeeName != null || slot.kooperationspartnerName != null || (slot.oNr != null && slot.oNr!.isNotEmpty)) ...[
                     const Divider(height: 24),
-                    if (slot.angestellteName != null)
-                      _buildDetailRow(Icons.person, 'Mitarbeiter', slot.angestellteName!),
+                    if (slot.originalGeplantName != null && slot.originalGeplantName != slot.effectiveEmployeeName)
+                      _buildDetailRow(Icons.person_off_outlined, 'Ursprünglich geplant', slot.originalGeplantName!),
+                    if (slot.effectiveEmployeeName != null)
+                      _buildDetailRow(
+                        slot.hasErsatzOderTausch ? Icons.swap_horiz_rounded : Icons.person,
+                        slot.hasErsatzOderTausch ? (slot.isSpringer ? 'Mitarbeiter (Springer)' : 'Mitarbeiter (Ersatz)') : 'Mitarbeiter',
+                        slot.effectiveEmployeeName!,
+                      ),
+                    if (slot.bewacherID != null && slot.bewacherID!.isNotEmpty)
+                      _buildDetailRow(Icons.badge_outlined, 'Bewacher-ID', slot.bewacherID!),
                     if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
                       _buildDetailRow(Icons.handshake, 'Partner', slot.kooperationspartnerName!),
                     if (slot.oNr != null && slot.oNr!.isNotEmpty)

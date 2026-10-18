@@ -60,5 +60,46 @@ void main() {
 
       expect(firma, 'MB-SCC GmbH');
     });
+
+    test('Slot parses manual springer name and bewacherId from ersatzNotiz in fromJson', () {
+      final json = {
+        'id': 'slot-springer-1',
+        'name': 'Festival Einlass',
+        'status': 'Geplant',
+        'angestellteId': null,
+        'angestellteName': null,
+        'ersatzNotiz': '[Manuell erfasst] Name: Peter Müller | Bewacher-ID: DE-BWR-99881',
+      };
+
+      final slot = Slot.fromJson(json);
+
+      expect(slot.angestellteName, 'Peter Müller');
+      expect(slot.effectiveEmployeeName, 'Peter Müller');
+      expect(slot.springerName, 'Peter Müller');
+      expect(slot.bewacherID, 'DE-BWR-99881');
+      expect(slot.springerBewacherId, 'DE-BWR-99881');
+      expect(slot.isSpringer, isTrue);
+      expect(slot.isManualSpringer, isTrue);
+      expect(slot.hasErsatzOderTausch, isTrue);
+    });
+
+    test('Slot parses originally planned employee name upon shift exchange', () {
+      final json = {
+        'id': 'slot-swap-1',
+        'name': 'Objektschutz Pforte',
+        'status': 'Geplant',
+        'angestellteId': 'emp-new-1',
+        'angestellteName': 'Tasnim Hida',
+        'ersatzNotiz': '[Vor-Ort-Austausch] Ursprünglich geplant: Jan Philipp von Czapiewski',
+      };
+
+      final slot = Slot.fromJson(json);
+
+      expect(slot.angestellteName, 'Tasnim Hida');
+      expect(slot.effectiveEmployeeName, 'Tasnim Hida');
+      expect(slot.originalGeplantName, 'Jan Philipp von Czapiewski');
+      expect(slot.hasErsatzOderTausch, isTrue);
+      expect(slot.isSpringer, isTrue);
+    });
   });
 }

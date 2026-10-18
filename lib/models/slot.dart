@@ -111,6 +111,33 @@ class Slot {
   });
 
   factory Slot.fromJson(Map<String, dynamic> json) {
+    final rawErsatz = json['ersatzNotiz']?.toString() ?? json['ersatz_notiz']?.toString();
+    String? empName = json['angestellteName']?.toString();
+    String? bwrId = json['bewacherID']?.toString() ?? json['bewacherId']?.toString();
+    bool isManual = json['isManualSpringer'] == true || (rawErsatz != null && rawErsatz.contains('[Manuell erfasst]'));
+
+    if (rawErsatz != null && rawErsatz.isNotEmpty) {
+      if (empName == null || empName.trim().isEmpty) {
+        final mName = RegExp(r'Name:\s*([^\|\n\r]+)').firstMatch(rawErsatz);
+        if (mName != null) {
+          final candName = mName.group(1)?.trim();
+          if (candName != null && candName.isNotEmpty) {
+            empName = candName;
+            isManual = true;
+          }
+        }
+      }
+      if (bwrId == null || bwrId.trim().isEmpty) {
+        final mBwr = RegExp(r'Bewacher-ID:\s*([^\|\n\r]+)').firstMatch(rawErsatz);
+        if (mBwr != null) {
+          final cand = mBwr.group(1)?.trim();
+          if (cand != null && cand.isNotEmpty && cand != 'Keine') {
+            bwrId = cand;
+          }
+        }
+      }
+    }
+
     return Slot(
       id: json['id'] ?? '',
       name: json['name'] ?? '',
@@ -121,7 +148,7 @@ class Slot {
       objekteId: json['serviceObjectId'] ?? json['objekteId'],
       objekteName: json['serviceObjectName'] ?? json['objekteName'],
       angestellteId: json['angestellteId'],
-      angestellteName: json['angestellteName'],
+      angestellteName: empName,
       angestelltePhone: json['angestelltePhone']?.toString(),
       einsatzleiterId: json['einsatzleiterId'],
       einsatzleiterName: json['einsatzleiterName'],
@@ -153,15 +180,15 @@ class Slot {
       lonK: _parseDouble(json['lonK']),
       geofenceRadius: int.tryParse(json['geofenceRadius']?.toString() ?? '') ?? int.tryParse(json['rad']?.toString() ?? ''),
       rad: int.tryParse(json['rad']?.toString() ?? '') ?? int.tryParse(json['geofenceRadius']?.toString() ?? ''),
-      bewacherID: json['bewacherID'] ?? json['bewacherId'],
+      bewacherID: bwrId,
       personalausweisnummer: json['personalausweisnummer'],
       kleidung: json['kleidung'] == true,
       kleidungAnmerkungen: json['kleidungAnmerkungen']?.toString(),
       neueobjektkleidung: json['neueobjektkleidung']?.toString(),
       neueobjektkleidunganmerkung: json['neueobjektkleidunganmerkung']?.toString(),
       annahmeStatus: json['annahmeStatus']?.toString(),
-      ersatzNotiz: json['ersatzNotiz']?.toString(),
-      isManualSpringer: json['isManualSpringer'] == true || (json['ersatzNotiz'] != null && json['ersatzNotiz'].toString().contains('[Manuell erfasst]')),
+      ersatzNotiz: rawErsatz,
+      isManualSpringer: isManual,
     );
   }
 
@@ -309,4 +336,50 @@ class Slot {
 
   /// Gibt an, ob diese Schicht intern durch MB-SCC besetzt ist
   bool get isInternalEmployee => !isExternalPartner;
+
+  /// Gibt den ursprünglich geplanten Namen zurück, falls ein Schichttausch/Ersatz stattfand
+  String? get originalGeplantName {
+    if (ersatzNotiz == null || ersatzNotiz!.isEmpty) return null;
+    final m = RegExp(r'Ursprünglich geplant:\s*([^\|\n\r]+)').firstMatch(ersatzNotiz!);
+    if (m != null) {
+      final name = m.group(1)?.trim();
+      if (name != null && name.isNotEmpty) return name;
+    }
+    return null;
+  }
+
+  /// Gibt den manuell erfassten Springer-Namen zurück, falls vorhanden
+  String? get springerName {
+    if (ersatzNotiz == null || ersatzNotiz!.isEmpty) return null;
+    final m = RegExp(r'Name:\s*([^\|\n\r]+)').firstMatch(ersatzNotiz!);
+    if (m != null) {
+      final name = m.group(1)?.trim();
+      if (name != null && name.isNotEmpty) return name;
+    }
+    return null;
+  }
+
+  /// Gibt die manuell erfasste Bewacher-ID aus der Ersatznotiz zurück
+  String? get springerBewacherId {
+    if (ersatzNotiz == null || ersatzNotiz!.isEmpty) return null;
+    final m = RegExp(r'Bewacher-ID:\s*([^\|\n\r]+)').firstMatch(ersatzNotiz!);
+    if (m != null) {
+      final bId = m.group(1)?.trim();
+      if (bId != null && bId.isNotEmpty && bId != 'Keine') return bId;
+    }
+    return null;
+  }
+
+  /// Liefert den effektiven Mitarbeiternamen für die Anzeige (egal ob regulär oder Springer)
+  String? get effectiveEmployeeName {
+    if (angestellteName != null && angestellteName!.trim().isNotEmpty) {
+      return angestellteName!.trim();
+    }
+    return springerName;
+  }
+
+  /// Gibt an, ob ein Ersatz/Tausch oder Springer auf dieser Schicht aktiv ist
+  bool get hasErsatzOderTausch {
+    return isSpringer || originalGeplantName != null || springerName != null;
+  }
 }

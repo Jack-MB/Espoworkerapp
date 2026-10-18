@@ -3,6 +3,25 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [1.3.29+55] - 2026-10-18
+
+### Changed & Enhanced (Check-In Terminal Parität: Freie Namen, Springer & Tausch in der Schichtenliste)
+- **Check-In Terminal Parität in der Schichtenliste (`slots_screen.dart`, `slot.dart`)**:
+  - **Freie Namen & Springer-Anzeige**: Manuell erfasste Springer (z. B. aus dem Vor-Ort-Formular) erscheinen in jeder Schichtkarte der Schichtenliste mit amber-farbenem `[SPRINGER]`-Badge und Bewacher-ID (`BWR: DE-BWR-...`).
+  - **Schichttausch mit Alt-Mitarbeiter-Historie**: Falls ein Mitarbeiter vor Ort getauscht wurde, wird der ursprünglich eingeteilte Mitarbeiter durchgestrichen (`~Geplant: Max Mustermann~`) und darunter in Amber mit Tausch-Icon `🔄 Ersatz: Neuer Mitarbeiter [TAUSCH]` dargestellt.
+  - **Mitarbeiter-Filter**: Der Personenfilter in der Schichtenansicht berücksichtigt nun auch freie Springer (`slot.effectiveEmployeeName`).
+  - **Schicht-Detailansicht**: Bei Klick auf eine Schichtkarte werden ursprünglicher Mitarbeiter, Tausch-Status und Bewacher-ID sauber aufgeschlüsselt.
+- **Check-In Screen Parität (`self_checkin_screen.dart`)**:
+  - Kacheln zeigen bei Vor-Ort-Austausch den durchgestrichenen Vorgänger an.
+  - Detail-Dialog (`_showEmployeeDetailsDialog`) führt die Zeile *Ursprünglich geplant* auf.
+- **Model Parser (`slot.dart`)**:
+  - `Slot.fromJson` extrahiert bei unbesetzten Slots mit `ersatzNotiz` automatisch den Namen und die Bewacher-ID.
+  - Neue Getter: `originalGeplantName`, `springerName`, `springerBewacherId`, `effectiveEmployeeName`, `hasErsatzOderTausch`.
+- **Unit Tests (`slot_card_layout_details_test.dart`)**:
+  - 5 automatisierte Unit-Tests für Springer- und Tausch-Parsing (insgesamt 72 bestandene Tests).
+
+---
+
 ## [1.3.28+54] - 2026-10-18
 
 ### Changed & Enhanced (Kachel-Optimierung, Positionsangabe, Tauschen-Symbol & Bewacher-Details-Popup)

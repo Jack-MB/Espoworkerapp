@@ -1671,6 +1671,16 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
             children: [
               const Divider(height: 1),
               const SizedBox(height: 14),
+              if (slot.originalGeplantName != null && slot.originalGeplantName != slot.effectiveEmployeeName) ...[
+                _buildDetailInfoRow(
+                  icon: Icons.person_off_outlined,
+                  label: 'Ursprünglich geplant',
+                  value: slot.originalGeplantName!,
+                  isDark: isDark,
+                  highlightColor: Colors.grey.shade500,
+                ),
+                const SizedBox(height: 10),
+              ],
               _buildDetailInfoRow(
                 icon: Icons.person_rounded,
                 label: 'Name',
@@ -2016,6 +2026,19 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            if (slot.originalGeplantName != null && slot.originalGeplantName != slot.angestellteName)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 1),
+                                child: Text(
+                                  'Geplant: ${slot.originalGeplantName!}',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    color: Colors.grey.shade500,
+                                    decoration: TextDecoration.lineThrough,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
                             Row(
                               children: [
                                 Flexible(
