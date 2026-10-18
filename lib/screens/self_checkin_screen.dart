@@ -13,7 +13,6 @@ import '../services/location_service.dart';
 import '../services/sync_queue_service.dart';
 import '../core/constants.dart';
 import '../utils/espo_date.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 /// Self-Service Check-In Screen für Mitarbeiter & Einsatzleiter — inspiriert vom stationären Check-in-Terminal.
 /// Da der Mitarbeiter in der App bereits authentifiziert ist, wird KEIN Barcode-Scanner benötigt.
@@ -1865,21 +1864,6 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                             ],
                           ),
                         ),
-                        if (slot.angestelltePhone != null && slot.angestelltePhone!.trim().isNotEmpty) ...[
-                          IconButton(
-                            icon: const Icon(Icons.phone, size: 18, color: Colors.green),
-                            tooltip: 'Anrufen: ${slot.angestelltePhone}',
-                            padding: const EdgeInsets.all(4),
-                            constraints: const BoxConstraints(),
-                            onPressed: () async {
-                              final uri = Uri.parse('tel:${slot.angestelltePhone!.trim()}');
-                              if (await canLaunchUrl(uri)) {
-                                await launchUrl(uri);
-                              }
-                            },
-                          ),
-                          const SizedBox(width: 4),
-                        ],
                         if (canAssignEmployee) ...[
                           InkWell(
                             onTap: () => _showEmployeeSelectionSheet(slot),
@@ -2230,6 +2214,7 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
   List<Map<String, dynamic>> _partners = [];
   String? _selectedKpId;
   String? _kpName;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -2267,6 +2252,7 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _searchCtrl.dispose();
     _freierNameCtrl.dispose();
     _bewacherIdCtrl.dispose();
@@ -2331,20 +2317,57 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
 
   void _onSearchChanged(String query) {
     final q = query.trim().toLowerCase();
+    _debounceTimer?.cancel();
+
     if (q.isEmpty) {
       setState(() => _filteredEmployees = _allEmployees);
       return;
     }
 
+    final words = q.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+
+    // 1. Sofortige client-seitige Filterung für unmittelbare UI-Reaktion
     setState(() {
       _filteredEmployees = _allEmployees.where((emp) {
         final name = (emp['name'] ?? '').toString().toLowerCase();
         final pNr = (emp['personalnummer'] ?? '').toString().toLowerCase();
         final oNr = (emp['oNr'] ?? '').toString().toLowerCase();
         final quals = (emp['qualifikationen'] as List? ?? []).join(' ').toLowerCase();
-        return name.contains(q) || pNr.contains(q) || oNr.contains(q) || quals.contains(q);
+        final kp = (emp['kooperationspartnerName'] ?? '').toString().toLowerCase();
+        return words.every((word) =>
+            name.contains(word) || pNr.contains(word) || oNr.contains(word) || quals.contains(word) || kp.contains(word));
       }).toList();
     });
+
+    // 2. Debounced Server-Suche für firmenübergreifende Ergebnisse / Springer aus MB-SCC
+    if (q.length >= 2) {
+      _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
+        try {
+          final res = await _api.getAssignableEmployees(
+            slotId: widget.slot.id,
+            search: query.trim(),
+            kooperationspartnerId: _selectedKpId,
+          );
+          final serverList = (res['list'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
+          if (!mounted || _searchCtrl.text.trim() != query.trim()) return;
+
+          setState(() {
+            final existingIds = _filteredEmployees.map((e) => e['id']?.toString()).toSet();
+            final combined = List<Map<String, dynamic>>.from(_filteredEmployees);
+            for (final item in serverList) {
+              final id = item['id']?.toString();
+              if (id != null && !existingIds.contains(id)) {
+                combined.add(item);
+                existingIds.add(id);
+              }
+            }
+            _filteredEmployees = combined;
+          });
+        } catch (e) {
+          debugPrint('Debounced employee search error: $e');
+        }
+      });
+    }
   }
 
   @override
@@ -3021,6 +3044,8 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
                   _buildTag('P-Nr. #$pNr', isDark, Colors.blueGrey),
                 if (oNr != null && oNr.isNotEmpty)
                   _buildTag('Ordner #$oNr', isDark, Colors.purple),
+                if (emp['kooperationspartnerName'] != null && emp['kooperationspartnerName'].toString().isNotEmpty)
+                  _buildTag(emp['kooperationspartnerName'].toString(), isDark, Colors.blue),
                 ...quals.map((q) => _buildTag(q.toString(), isDark, Colors.teal)),
               ],
             ),

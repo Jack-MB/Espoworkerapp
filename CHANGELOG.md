@@ -5,6 +5,20 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [1.3.26+52] - 2026-10-18
+
+### Fixed & Enhanced (Entfernung Telefonhörer beim Einstempeln & Multi-Word Mitarbeitersuche)
+- **Entfernung des Telefonhörers (`self_checkin_screen.dart`)**:
+  - Der Anrufen-Button (`Icons.phone`) neben dem Mitarbeiternamen auf den Schichtkarten im Check-in Screen wurde vollständig entfernt.
+- **Intelligente Multi-Word & Debounced Server-Suche im Schichttausch (`self_checkin_screen.dart`, `slot_employee_assignment_test.dart`)**:
+  - **Multi-Word Matching**: Der Suchfilter splittet Eingaben wie „Jan Philipp von Czapiewski“, „czapiewski jan“ oder „tasnim hida“ in Einzelfragmente und gleicht alle Wörter über Name, Personalnummer, Ordnernummer, Qualifikationen und Firmenname ab.
+  - **Debounced Server-Abfrage**: Nach 300 ms Tipppause wird automatisch die erweiterte Backend-API aufgerufen, wodurch auch firmenübergreifende Springer (z. B. MB-SCC Personal für Subunternehmer-Schichten) nahtlos in den Treffern erscheinen.
+  - **Firmen-Kennzeichnung**: Jeder Mitarbeiter in der Auswahlliste zeigt nun ein farbiges Firmen-Badge (`MB Security Concept & Consulting GmbH` bzw. Partnerfirma).
+- **Unit Tests (`slot_employee_assignment_test.dart`)**:
+  - Neuer Testfall für Multi-Word Search Matching inklusive invertierter Wortreihenfolge und Qualifikations-/Ordnernummernfilter (insgesamt 67 bestandene Tests).
+
+---
+
 ## [1.3.25+51] - 2026-10-18
 
 ### Fixed & Enhanced (Chronologische Schicht-Sortierung, Strikter Kooperationspartner-Filter, Freier Springer & Primus E-Mail Parser)

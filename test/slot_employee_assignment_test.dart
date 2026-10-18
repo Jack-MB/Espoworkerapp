@@ -344,5 +344,64 @@ void main() {
         'Zoltan Varga',
       ]);
     });
+
+    test('Multi-word search filter matches names regardless of word order and middle names', () {
+      final employees = [
+        {
+          'id': 'emp-czap',
+          'name': 'Jan Philipp von Czapiewski',
+          'personalnummer': 'MB-001',
+          'oNr': '101',
+          'kooperationspartnerName': 'MB Security Concept & Consulting GmbH',
+          'qualifikationen': ['§ 34a GewO', 'Brandschutzhelfer'],
+        },
+        {
+          'id': 'emp-hida',
+          'name': 'Tasnim Hida',
+          'personalnummer': 'MB-002',
+          'oNr': '102',
+          'kooperationspartnerName': 'MB Security Concept & Consulting GmbH',
+          'qualifikationen': ['Ersthelfer'],
+        },
+        {
+          'id': 'emp-partner',
+          'name': 'Omar Kataa',
+          'personalnummer': 'DEV-55',
+          'oNr': '205',
+          'kooperationspartnerName': 'DEV-Multiservices & Consulting GmbH',
+          'qualifikationen': [],
+        },
+      ];
+
+      List<Map<String, dynamic>> filter(String query) {
+        final q = query.trim().toLowerCase();
+        if (q.isEmpty) return employees;
+        final words = q.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+        return employees.where((emp) {
+          final name = (emp['name'] ?? '').toString().toLowerCase();
+          final pNr = (emp['personalnummer'] ?? '').toString().toLowerCase();
+          final oNr = (emp['oNr'] ?? '').toString().toLowerCase();
+          final quals = (emp['qualifikationen'] as List? ?? []).join(' ').toLowerCase();
+          final kp = (emp['kooperationspartnerName'] ?? '').toString().toLowerCase();
+          return words.every((word) =>
+              name.contains(word) || pNr.contains(word) || oNr.contains(word) || quals.contains(word) || kp.contains(word));
+        }).toList();
+      }
+
+      // Exact match
+      expect(filter('Jan Philipp von Czapiewski').map((e) => e['id']).toList(), ['emp-czap']);
+      // Reordered words & partial
+      expect(filter('czapiewski jan').map((e) => e['id']).toList(), ['emp-czap']);
+      expect(filter('Jan Czapiewski').map((e) => e['id']).toList(), ['emp-czap']);
+      expect(filter('tasnim hida').map((e) => e['id']).toList(), ['emp-hida']);
+      expect(filter('hida tasnim').map((e) => e['id']).toList(), ['emp-hida']);
+      // Filter by Ordner-Nr or P-Nr with name
+      expect(filter('czapiewski 101').map((e) => e['id']).toList(), ['emp-czap']);
+      // Filter by company tag
+      expect(filter('MB Security').length, 2);
+      expect(filter('DEV-Multiservices').map((e) => e['id']).toList(), ['emp-partner']);
+      // Filter by qualification
+      expect(filter('Brandschutzhelfer').map((e) => e['id']).toList(), ['emp-czap']);
+    });
   });
 }
