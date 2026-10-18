@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/slot.dart';
 import 'api_service.dart';
+import 'sync_queue_service.dart';
 import '../utils/espo_date.dart';
 
 /// Zentraler State-Service für Check-In, Check-Out und Ordnernummern.
@@ -197,7 +198,9 @@ class CheckinStateService extends ChangeNotifier {
     }
   }
 
-  /// Führt den Check-In für eine Schicht aus und benachrichtigt alle Screens sofort
+  /// Führt den Check-In für eine Schicht aus und benachrichtigt alle Screens sofort.
+  /// Bei Netzausfall wird der Check-In inklusive exakter UTC-Erfassungszeit in die
+  /// persistente SyncQueue eingereiht.
   Future<Map<String, dynamic>> performCheckIn(Slot slot, {String? oNr, String? customTimeUtc}) async {
     final now = DateTime.now();
     final localTimeStr = DateFormat('HH:mm').format(now);
@@ -220,6 +223,15 @@ class CheckinStateService extends ChangeNotifier {
         'ampel': _slotAmpeln[slot.id] ?? '🟢',
       };
     } catch (e) {
+      debugPrint('CheckinStateService: Offline or failed checkin, enqueuing for sync: $e');
+      await SyncQueueService().enqueue(
+        slotId: slot.id,
+        data: {
+          'checkin': utcTimeStr,
+          if (oNr != null && oNr.isNotEmpty) 'oNr': oNr,
+        },
+        description: 'Check-In ${slot.schichtbezeichnung ?? slot.name} ($localTimeStr)',
+      );
       return {
         'success': true,
         'offline': true,
@@ -229,8 +241,14 @@ class CheckinStateService extends ChangeNotifier {
     }
   }
 
-  /// Führt den Check-Out für eine Schicht aus und benachrichtigt alle Screens sofort
-  Future<Map<String, dynamic>> performCheckOut(Slot slot, {String? customTimeUtc}) async {
+  /// Führt den Check-Out für eine Schicht aus und benachrichtigt alle Screens sofort.
+  /// Berücksichtigt Pausenminuten und ArbZG-Pausenregelung.
+  Future<Map<String, dynamic>> performCheckOut(
+    Slot slot, {
+    String? customTimeUtc,
+    int? pauseMinutes,
+    bool? pausenregelungIgnoriert,
+  }) async {
     final now = DateTime.now();
     final localTimeStr = DateFormat('HH:mm').format(now);
     final utcTimeStr = customTimeUtc ?? now.toUtc().toIso8601String();
@@ -241,13 +259,28 @@ class CheckinStateService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final success = await _api.checkOutSlot(slot.id, checkOutTime: utcTimeStr);
+      final success = await _api.checkOutSlot(
+        slot.id,
+        checkOutTime: utcTimeStr,
+        pauseMinutes: pauseMinutes,
+        pausenregelungIgnoriert: pausenregelungIgnoriert,
+      );
       return {
         'success': success,
         'offline': false,
         'time': localTimeStr,
       };
     } catch (e) {
+      debugPrint('CheckinStateService: Offline or failed checkout, enqueuing for sync: $e');
+      await SyncQueueService().enqueue(
+        slotId: slot.id,
+        data: {
+          'checkout': utcTimeStr,
+          if (pauseMinutes != null) 'pauseMinutes': pauseMinutes,
+          if (pausenregelungIgnoriert != null) 'pausenregelungIgnoriert': pausenregelungIgnoriert,
+        },
+        description: 'Check-Out ${slot.schichtbezeichnung ?? slot.name} ($localTimeStr)',
+      );
       return {
         'success': true,
         'offline': true,
@@ -263,12 +296,46 @@ class CheckinStateService extends ChangeNotifier {
     _slotAmpeln.remove(slot.id);
     await _saveToLocal();
     notifyListeners();
+
+    try {
+      await _api.resetCheckIn(slot.id);
+    } catch (e) {
+      debugPrint('revertCheckIn failed, enqueuing reset: $e');
+      await SyncQueueService().enqueue(
+        slotId: slot.id,
+        data: {'reset': true, 'checkin': null},
+        description: 'Check-In zurücksetzen: ${slot.schichtbezeichnung ?? slot.name}',
+      );
+    }
   }
 
   /// Setzt den Check-Out-Status einer Schicht zurück
   Future<void> revertCheckOut(Slot slot) async {
     _checkedOutSlotIds.remove(slot.id);
     _checkedOutTimes.remove(slot.id);
+    await _saveToLocal();
+    notifyListeners();
+
+    try {
+      await _api.resetCheckOut(slot.id);
+    } catch (e) {
+      debugPrint('revertCheckOut failed, enqueuing reset: $e');
+      await SyncQueueService().enqueue(
+        slotId: slot.id,
+        data: {'reset': true, 'checkout': null},
+        description: 'Check-Out zurücksetzen: ${slot.schichtbezeichnung ?? slot.name}',
+      );
+    }
+  }
+
+  /// Löscht alle lokalen Anwesenheitszustände (Session-Hygiene bei Logout)
+  Future<void> clearAll() async {
+    _checkedInSlotIds.clear();
+    _checkedOutSlotIds.clear();
+    _checkedInTimes.clear();
+    _checkedOutTimes.clear();
+    _slotAmpeln.clear();
+    _slotOrdnerNummern.clear();
     await _saveToLocal();
     notifyListeners();
   }

@@ -21,6 +21,7 @@ dependencies:
   flutter_html: ^3.0.0-beta.2
   image_picker: ^1.1.2
   syncfusion_flutter_calendar: ^33.1.44
+  syncfusion_flutter_signaturepad: ^33.1.44
   intl: ^0.20.2
   flutter_local_notifications: ^21.0.0
   flutter_localizations:

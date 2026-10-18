@@ -140,7 +140,7 @@ class NotificationService {
         break;
       case 'Slot':
       case 'Slots':
-        target = const SlotsScreen();
+        target = SlotsScreen(highlightId: entityId);
         break;
       case 'Urlaub':
         target = const UrlaubScreen();

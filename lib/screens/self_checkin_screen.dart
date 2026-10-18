@@ -13,6 +13,7 @@ import '../services/location_service.dart';
 import '../services/sync_queue_service.dart';
 import '../core/constants.dart';
 import '../utils/espo_date.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// Self-Service Check-In Screen für Mitarbeiter & Einsatzleiter — inspiriert vom stationären Check-in-Terminal.
 /// Da der Mitarbeiter in der App bereits authentifiziert ist, wird KEIN Barcode-Scanner benötigt.
@@ -390,37 +391,179 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     if (mounted) setState(() => _processingSlotId = null);
   }
 
-  Future<void> _doCheckOut(Slot slot) async {
-    if (_isProcessing) return;
+  Future<int?> _showPauseSelectionDialog(Slot slot) async {
+    int selectedPause = 0;
+    int workedMinutes = 0;
+    try {
+      final checkinTimeStr = _checkedTimes[slot.id] ?? slot.checkin;
+      if (checkinTimeStr != null && checkinTimeStr.isNotEmpty) {
+        DateTime? inTime;
+        if (checkinTimeStr.contains(':') && !checkinTimeStr.contains('T') && !checkinTimeStr.contains('-')) {
+          final parts = checkinTimeStr.split(':');
+          final now = DateTime.now();
+          inTime = DateTime(now.year, now.month, now.day, int.parse(parts[0]), int.parse(parts[1]));
+        } else {
+          inTime = espoUtcToLocal(checkinTimeStr);
+        }
+        workedMinutes = DateTime.now().difference(inTime).inMinutes;
+      }
+    } catch (_) {}
+
+    if (workedMinutes >= 540) {
+      selectedPause = 45;
+    } else if (workedMinutes >= 360) {
+      selectedPause = 30;
+    }
 
     final isOtherPerson = slot.angestellteName != null &&
         slot.angestellteId != null &&
         slot.angestellteId != _currentAngestellteId;
 
-    final confirmed = await showDialog<bool>(
+    final result = await showDialog<int>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.logout, color: Colors.blueGrey),
-            SizedBox(width: 8),
-            Text('Schicht auschecken'),
-          ],
-        ),
-        content: Text(isOtherPerson
-            ? 'Möchtest du die Schicht von „${slot.angestellteName}“ (${slot.name}) jetzt auschecken?'
-            : 'Möchtest du dich jetzt von der Schicht „${slot.name}“ auschecken?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppConstants.primaryColor, foregroundColor: Colors.white),
-            child: const Text('Jetzt Auschecken'),
-          ),
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (ctx) {
+        int tempPause = selectedPause;
+        final customController = TextEditingController();
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return AlertDialog(
+              backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+              ),
+              title: Row(
+                children: [
+                  const Icon(Icons.logout, color: Colors.blueGrey),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Schicht auschecken',
+                    style: TextStyle(
+                      color: isDark ? Colors.white : Colors.black87,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isOtherPerson
+                        ? 'Schicht von „${slot.angestellteName}“ (${slot.name}) jetzt beenden.'
+                        : 'Möchtest du die Schicht „${slot.name}“ jetzt beenden?',
+                    style: TextStyle(color: isDark ? Colors.white70 : Colors.black87, fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Genommene Pause angeben:',
+                    style: TextStyle(
+                      color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  if (workedMinutes >= 360) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.amber.shade700.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline, color: Colors.amber, size: 16),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              workedMinutes >= 540
+                                  ? 'ArbZG (>9h Schicht): mind. 45 Min gesetzliche Pause'
+                                  : 'ArbZG (>6h Schicht): mind. 30 Min gesetzliche Pause',
+                              style: const TextStyle(color: Colors.amber, fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [0, 15, 30, 45, 60].map((mins) {
+                      final isSelected = tempPause == mins && customController.text.isEmpty;
+                      return ChoiceChip(
+                        label: Text(
+                          '$mins Min',
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black87),
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                        selected: isSelected,
+                        selectedColor: AppConstants.primaryColor,
+                        backgroundColor: isDark ? Colors.white10 : Colors.grey.shade100,
+                        onSelected: (val) {
+                          if (val) {
+                            setModalState(() {
+                              tempPause = mins;
+                              customController.clear();
+                            });
+                          }
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: customController,
+                    keyboardType: TextInputType.number,
+                    style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Oder andere Minutenzahl eingeben...',
+                      hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.grey.shade400, fontSize: 12),
+                      filled: true,
+                      fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade100,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300)),
+                    ),
+                    onChanged: (val) {
+                      final parsed = int.tryParse(val);
+                      if (parsed != null) {
+                        setModalState(() => tempPause = parsed);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, null), child: const Text('Abbrechen')),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, tempPause),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppConstants.primaryColor, foregroundColor: Colors.white),
+                  child: const Text('Jetzt Auschecken'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
-    if (confirmed != true) return;
+    return result;
+  }
+
+  Future<void> _doCheckOut(Slot slot) async {
+    if (_isProcessing) return;
+
+    final pauseMinutes = await _showPauseSelectionDialog(slot);
+    if (pauseMinutes == null) return;
 
     if (!mounted) return;
     setState(() => _processingSlotId = slot.id);
@@ -433,11 +576,16 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
       return;
     }
 
-    await _executeCheckOut(slot);
+    final bool pauseIgnoriert = pauseMinutes == 0;
+    await _executeCheckOut(slot, pauseMinutes: pauseMinutes, pausenregelungIgnoriert: pauseIgnoriert);
   }
 
   /// Führt den tatsächlichen Check-Out aus (nach GPS-Bestätigung oder Admin-Freigabe)
-  Future<void> _executeCheckOut(Slot slot) async {
+  Future<void> _executeCheckOut(
+    Slot slot, {
+    int? pauseMinutes,
+    bool? pausenregelungIgnoriert,
+  }) async {
     setState(() => _processingSlotId = slot.id);
 
     final now = DateTime.now();
@@ -451,6 +599,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
       final res = await CheckinStateService().performCheckOut(
         slot,
         customTimeUtc: nowUtcStr,
+        pauseMinutes: pauseMinutes,
+        pausenregelungIgnoriert: pausenregelungIgnoriert,
       );
 
       final isOffline = res['offline'] == true;
@@ -835,9 +985,9 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
         return _EmployeeSelectionSheet(
           slot: slot,
           isDark: isDark,
-          onEmployeeSelected: (empId, empName) async {
+          onEmployeeSelected: (empId, empName, {kpId}) async {
             Navigator.pop(sheetContext);
-            await _assignEmployee(slot, empId, empName);
+            await _assignEmployee(slot, empId, empName, kooperationspartnerId: kpId);
           },
           onRemoveAssignment: () async {
             Navigator.pop(sheetContext);
@@ -848,11 +998,17 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     );
   }
 
-  Future<void> _assignEmployee(Slot slot, String? angestellteId, String? angestellteName) async {
+  Future<void> _assignEmployee(
+    Slot slot,
+    String? angestellteId,
+    String? angestellteName, {
+    String? kooperationspartnerId,
+  }) async {
     try {
       final res = await _api.assignEmployeeToSlot(
         slotId: slot.id,
         angestellteId: angestellteId,
+        kooperationspartnerId: kooperationspartnerId,
       );
 
       if (res['success'] == true) {
@@ -864,13 +1020,17 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
               angestellteId: angestellteId,
               angestellteName: angestellteName ?? '',
               oNr: res['oNr']?.toString() ?? _allRelevantSlots[idx].oNr,
+              kooperationspartnerId: res['kooperationspartnerId'] ?? kooperationspartnerId ?? _allRelevantSlots[idx].kooperationspartnerId,
+              kooperationspartnerName: res['kooperationspartnerName'] ?? _allRelevantSlots[idx].kooperationspartnerName,
             );
           }
         });
 
         _showSuccessSnackbar(
           angestellteId != null
-              ? '✅ $angestellteName erfolgreich der Schicht zugewiesen'
+              ? (slot.angestellteId != null && slot.angestellteId != angestellteId
+                  ? '🔄 Vor-Ort-Austausch: $angestellteName zugewiesen'
+                  : '✅ $angestellteName erfolgreich zugewiesen')
               : '✅ Mitarbeiter-Zuweisung entfernt',
         );
 
@@ -1141,6 +1301,10 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
               ),
           ],
 
+          // Live Headcount Banner für Einsatzleiter / Admin
+          if (_hasSupervisorCapabilities && displayedList.isNotEmpty)
+            _buildLiveHeadcountBanner(displayedList, isDark),
+
           // Schichtenliste mit Erhalt der Scrollposition
           Expanded(
             child: _isLoading
@@ -1176,6 +1340,137 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                           ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLiveHeadcountBanner(List<Slot> slots, bool isDark) {
+    int total = slots.length;
+    int checkedInCount = 0;
+    int waitingCount = 0;
+    int completedCount = 0;
+    int internCount = 0;
+    int partnerCount = 0;
+
+    for (final s in slots) {
+      final isIn = _checkedIn.contains(s.id) || (s.checkin != null && s.checkin!.isNotEmpty);
+      final isOut = _checkedOut.contains(s.id) || (s.checkout != null && s.checkout!.isNotEmpty);
+
+      if (isOut) {
+        completedCount++;
+      } else if (isIn) {
+        checkedInCount++;
+      } else {
+        waitingCount++;
+      }
+
+      if (s.kooperationspartnerId != null && s.kooperationspartnerId!.isNotEmpty) {
+        partnerCount++;
+      } else {
+        internCount++;
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark ? Colors.white12 : Colors.grey.shade300,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(Icons.groups_rounded, size: 18, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+              const SizedBox(width: 8),
+              Text(
+                'Live-Kopfzähler vor Ort',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'Gesamt: $total',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _buildHeadcountPill('🟢 Anwesend', '$checkedInCount', Colors.green, isDark),
+              const SizedBox(width: 8),
+              _buildHeadcountPill('⚪ Offen', '$waitingCount', Colors.orange, isDark),
+              const SizedBox(width: 8),
+              _buildHeadcountPill('🏁 Beendet', '$completedCount', Colors.blueGrey, isDark),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '🏢 Intern: $internCount',
+                style: TextStyle(fontSize: 11, color: isDark ? Colors.white60 : Colors.grey.shade600, fontWeight: FontWeight.w500),
+              ),
+              Text(
+                '🤝 Partner: $partnerCount',
+                style: TextStyle(fontSize: 11, color: isDark ? Colors.white60 : Colors.grey.shade600, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeadcountPill(String label, String count, Color color, bool isDark) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(isDark ? 0.15 : 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Column(
+          children: [
+            Text(
+              count,
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: color),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: isDark ? Colors.white70 : Colors.grey.shade800),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1432,25 +1727,75 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                     child: Row(
                       children: [
                         CircleAvatar(
-                          radius: 11,
+                          radius: 12,
                           backgroundColor: isDark ? Colors.blueGrey.shade800 : Colors.blue.shade100,
-                          child: Icon(Icons.person, size: 14, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+                          child: Icon(Icons.person, size: 15, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            slot.angestellteName!,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color: isDark ? Colors.white : AppConstants.primaryColor,
-                            ),
-                            overflow: TextOverflow.ellipsis,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                slot.angestellteName!,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: isDark ? Colors.white : AppConstants.primaryColor,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
+                                Text(
+                                  'Firma: ${slot.kooperationspartnerName}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: isDark ? Colors.white60 : Colors.grey.shade600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                            ],
                           ),
                         ),
-                        if (canAssignEmployee) ...[
+                        if (slot.angestelltePhone != null && slot.angestelltePhone!.trim().isNotEmpty) ...[
+                          IconButton(
+                            icon: const Icon(Icons.phone, size: 18, color: Colors.green),
+                            tooltip: 'Anrufen: ${slot.angestelltePhone}',
+                            padding: const EdgeInsets.all(4),
+                            constraints: const BoxConstraints(),
+                            onPressed: () async {
+                              final uri = Uri.parse('tel:${slot.angestelltePhone!.trim()}');
+                              if (await canLaunchUrl(uri)) {
+                                await launchUrl(uri);
+                              }
+                            },
+                          ),
                           const SizedBox(width: 4),
-                          Icon(Icons.edit, size: 12, color: isDark ? Colors.white54 : Colors.grey),
+                        ],
+                        if (canAssignEmployee) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: isDark ? Colors.white12 : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.swap_horiz_rounded, size: 13, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+                                const SizedBox(width: 3),
+                                Text(
+                                  'Tauschen',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                           const SizedBox(width: 6),
                         ],
                         if (slot.isEinsatzleiter(_currentAngestellteId))
@@ -1553,6 +1898,36 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                         fontSize: 13,
                       ),
                       overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.radar_rounded,
+                          size: 11,
+                          color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '${slot.geofenceRadius ?? slot.rad ?? 50}m',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -1707,11 +2082,10 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
 class _EmployeeSelectionSheet extends StatefulWidget {
   final Slot slot;
   final bool isDark;
-  final Function(String empId, String empName) onEmployeeSelected;
+  final Function(String empId, String empName, {String? kpId}) onEmployeeSelected;
   final VoidCallback onRemoveAssignment;
 
   const _EmployeeSelectionSheet({
-    super.key,
     required this.slot,
     required this.isDark,
     required this.onEmployeeSelected,
@@ -1730,12 +2104,16 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
   String? _error;
   List<Map<String, dynamic>> _allEmployees = [];
   List<Map<String, dynamic>> _filteredEmployees = [];
+  List<Map<String, dynamic>> _partners = [];
+  String? _selectedKpId;
   String? _kpName;
 
   @override
   void initState() {
     super.initState();
     _kpName = widget.slot.kooperationspartnerName;
+    _selectedKpId = widget.slot.kooperationspartnerId;
+    _loadPartners();
     _fetchEmployees();
   }
 
@@ -1743,6 +2121,19 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
   void dispose() {
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPartners() async {
+    try {
+      final partners = await _api.getKooperationspartner();
+      if (mounted) {
+        setState(() {
+          _partners = partners;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading partners: $e');
+    }
   }
 
   Future<void> _fetchEmployees({String? search}) async {
@@ -1755,6 +2146,7 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
       final res = await _api.getAssignableEmployees(
         slotId: widget.slot.id,
         search: search,
+        kooperationspartnerId: _selectedKpId,
       );
 
       final list = (res['list'] as List? ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
@@ -1876,6 +2268,51 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
             ],
           ),
           const SizedBox(height: 14),
+
+          // Kooperationspartner Dropdown
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade300),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String?>(
+                value: _selectedKpId,
+                isExpanded: true,
+                dropdownColor: isDark ? const Color(0xFF1E222B) : Colors.white,
+                hint: const Text('Alle Firmen / Intern (MB-SCC)'),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('MB-SCC (Intern) / Alle', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                  ),
+                  ..._partners.map((p) => DropdownMenuItem<String?>(
+                        value: p['id'] as String?,
+                        child: Text(
+                          p['name'] as String? ?? 'Unbekannter Partner',
+                          style: const TextStyle(fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      )),
+                ],
+                onChanged: (newKpId) {
+                  setState(() {
+                    _selectedKpId = newKpId;
+                    if (newKpId == null) {
+                      _kpName = 'MB-SCC (Intern)';
+                    } else {
+                      final found = _partners.firstWhere((p) => p['id'] == newKpId, orElse: () => {});
+                      _kpName = found['name'] as String?;
+                    }
+                  });
+                  _fetchEmployees(search: _searchCtrl.text.trim());
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
 
           // Suchleiste mit Live-Suche
           TextField(
@@ -2090,7 +2527,7 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
                   size: 14,
                   color: isDark ? Colors.white38 : Colors.grey.shade400,
                 ),
-          onTap: isCurrentlyAssigned ? null : () => widget.onEmployeeSelected(empId, empName),
+          onTap: isCurrentlyAssigned ? null : () => widget.onEmployeeSelected(empId, empName, kpId: _selectedKpId),
         );
       },
     );

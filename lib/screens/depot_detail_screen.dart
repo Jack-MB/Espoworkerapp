@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:syncfusion_flutter_signaturepad/signaturepad.dart';
+import 'dart:ui' as ui;
+import 'dart:convert';
 import '../models/warehouse_depot.dart';
 import '../models/ordnerkarte_item.dart';
 import '../models/material_request.dart';
@@ -1039,6 +1042,7 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
   void _showReturnEquipmentDialog(Map<String, dynamic> item) async {
     String returnStatus = 'Zurückgegeben';
     final remarkCtrl = TextEditingController();
+    String? signatureBase64;
     bool isSubmitting = false;
 
     await showDialog(
@@ -1092,6 +1096,52 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
                   contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 ),
               ),
+              const SizedBox(height: 10),
+              if (signatureBase64 != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF10B981).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.verified, color: Color(0xFF10B981), size: 16),
+                      const SizedBox(width: 6),
+                      const Expanded(
+                        child: Text(
+                          'Rücknahme-Signatur erfasst',
+                          style: TextStyle(color: Color(0xFF10B981), fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () => setDlgState(() => signatureBase64 = null),
+                        child: const Icon(Icons.close, size: 14, color: Colors.white54),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF38BDF8)),
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  icon: const Icon(Icons.draw_rounded, color: Color(0xFF38BDF8), size: 15),
+                  label: const Text('Unterschrift erfassen (Optional)', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11)),
+                  onPressed: () async {
+                    final sig = await _showSignatureDialog(
+                      context: context,
+                      title: 'Rücknahme quittieren',
+                      subtitle: 'Bitte unterschreibe auf dem Display zur Bestätigung der Rückgabe.',
+                    );
+                    if (sig != null) {
+                      setDlgState(() => signatureBase64 = sig);
+                    }
+                  },
+                ),
             ],
           ),
           actions: [
@@ -1113,6 +1163,7 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
                         warehouseId: widget.depot.id,
                         status: returnStatus,
                         bemerkung: remarkCtrl.text.trim().isNotEmpty ? remarkCtrl.text.trim() : null,
+                        signature: signatureBase64,
                       );
                       if (ctx.mounted) {
                         Navigator.pop(ctx);
@@ -1163,6 +1214,126 @@ class _DepotDetailScreenState extends State<DepotDetailScreen> {
   }
 }
 
+Future<String?> _showSignatureDialog({
+  required BuildContext context,
+  required String title,
+  required String subtitle,
+}) async {
+  final GlobalKey<SfSignaturePadState> signaturePadKey = GlobalKey();
+
+  return showDialog<String>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setDlgState) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.draw_rounded, color: Color(0xFF38BDF8), size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                subtitle,
+                style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                height: 180,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFF334155)),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  children: [
+                    SfSignaturePad(
+                      key: signaturePadKey,
+                      strokeColor: Colors.white,
+                      backgroundColor: const Color(0xFF0F172A),
+                      minimumStrokeWidth: 2.0,
+                      maximumStrokeWidth: 4.0,
+                    ),
+                    Positioned(
+                      bottom: 8,
+                      right: 8,
+                      child: TextButton.icon(
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white12,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        ),
+                        icon: const Icon(Icons.clear, size: 14, color: Colors.white70),
+                        label: const Text('Löschen', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                        onPressed: () {
+                          signaturePadKey.currentState?.clear();
+                        },
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 12,
+                      left: 12,
+                      child: IgnorePointer(
+                        child: Text(
+                          'Hier unterschreiben ✍️',
+                          style: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 11, fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Ohne Unterschrift', style: TextStyle(color: Colors.white60)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981)),
+            icon: const Icon(Icons.check, size: 16, color: Colors.white),
+            label: const Text('Bestätigen', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            onPressed: () async {
+              try {
+                final image = await signaturePadKey.currentState!.toImage(pixelRatio: 2.0);
+                final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+                if (byteData != null) {
+                  final bytes = byteData.buffer.asUint8List();
+                  final b64 = base64Encode(bytes);
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx, b64);
+                  }
+                  return;
+                }
+              } catch (e) {
+                debugPrint('Signature capture error: $e');
+              }
+              if (ctx.mounted) {
+                Navigator.pop(ctx, null);
+              }
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _IssueEquipmentSheet extends StatefulWidget {
   final String warehouseId;
   final List<dynamic> availableItems;
@@ -1191,6 +1362,7 @@ class _IssueEquipmentSheetState extends State<_IssueEquipmentSheet> {
   Map<String, dynamic>? _selectedEmployee;
   bool _isSearchingEmp = false;
   bool _isSubmitting = false;
+  String? _signatureBase64;
 
   String? _selectedProductId;
   String? _selectedProductName;
@@ -1276,6 +1448,7 @@ class _IssueEquipmentSheetState extends State<_IssueEquipmentSheet> {
       angestellteId: angId,
       quantity: qty,
       bemerkung: _remarkCtrl.text.trim().isNotEmpty ? _remarkCtrl.text.trim() : null,
+      signature: _signatureBase64,
     );
 
     if (mounted) {
@@ -1524,7 +1697,59 @@ class _IssueEquipmentSheetState extends State<_IssueEquipmentSheet> {
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
+
+          if (_signatureBase64 != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF10B981).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.verified, color: Color(0xFF10B981), size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Digitale Empfangsunterschrift erfasst ✓',
+                      style: TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.white60, size: 18),
+                    tooltip: 'Unterschrift verwerfen',
+                    onPressed: () => setState(() => _signatureBase64 = null),
+                  ),
+                ],
+              ),
+            )
+          else
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF38BDF8), width: 1.2),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              icon: const Icon(Icons.draw_rounded, color: Color(0xFF38BDF8), size: 18),
+              label: const Text(
+                'Digitale Unterschrift erfassen (Optional)',
+                style: TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+              onPressed: () async {
+                final sig = await _showSignatureDialog(
+                  context: context,
+                  title: 'Ausrüstungs-Ausgabe quittieren',
+                  subtitle: 'Bitte unterschreibe auf dem Display zur Bestätigung der Aushändigung von „${_selectedProductName ?? "Ausrüstung"}“.',
+                );
+                if (sig != null) {
+                  setState(() => _signatureBase64 = sig);
+                }
+              },
+            ),
+
+          const SizedBox(height: 16),
 
           SizedBox(
             width: double.infinity,

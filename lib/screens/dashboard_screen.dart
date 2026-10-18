@@ -2542,6 +2542,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   void _logout() async {
     final storage = SecureStorageService();
     await storage.deleteAll();
+    await ApiService().clearLocalCaches();
+    await CheckinStateService().clearAll();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),

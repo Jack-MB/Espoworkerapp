@@ -445,8 +445,149 @@ class _SlotsScreenState extends State<SlotsScreen> {
       if (!isValid) return;
       _performCheckIn(slot);
     } else {
-      _performCheckOut(slot);
+      _uncheckSlot(slot);
     }
+  }
+
+  Future<int?> _showPauseSelectionDialog(Slot slot) async {
+    int selectedPause = 0;
+    int workedMinutes = 0;
+    try {
+      final checkinTimeStr = _checkedSlotTimes[slot.id] ?? slot.checkin;
+      if (checkinTimeStr != null && checkinTimeStr.isNotEmpty) {
+        DateTime? inTime;
+        if (checkinTimeStr.contains(':') && !checkinTimeStr.contains('T') && !checkinTimeStr.contains('-')) {
+          final parts = checkinTimeStr.split(':');
+          final now = DateTime.now();
+          inTime = DateTime(now.year, now.month, now.day, int.parse(parts[0]), int.parse(parts[1]));
+        } else {
+          inTime = espoUtcToLocal(checkinTimeStr);
+        }
+        workedMinutes = DateTime.now().difference(inTime).inMinutes;
+      }
+    } catch (_) {}
+
+    if (workedMinutes >= 540) {
+      selectedPause = 45;
+    } else if (workedMinutes >= 360) {
+      selectedPause = 30;
+    }
+
+    final result = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        int tempPause = selectedPause;
+        final customController = TextEditingController();
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E293B),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: Colors.white.withOpacity(0.1)),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.coffee_rounded, color: Colors.amberAccent),
+                  SizedBox(width: 8),
+                  Text('Pause angeben', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Wie viele Minuten Pause wurden während dieser Schicht genommen?',
+                    style: TextStyle(color: Colors.grey.shade300, fontSize: 13),
+                  ),
+                  if (workedMinutes >= 360) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.amber.shade700.withOpacity(0.4)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline, color: Colors.amberAccent, size: 16),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              workedMinutes >= 540
+                                  ? 'ArbZG-Empfehlung (>9h Dienst): mind. 45 Min Pause'
+                                  : 'ArbZG-Empfehlung (>6h Dienst): mind. 30 Min Pause',
+                              style: const TextStyle(color: Colors.amberAccent, fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [0, 15, 30, 45, 60].map((mins) {
+                      final isSelected = tempPause == mins && customController.text.isEmpty;
+                      return ChoiceChip(
+                        label: Text('$mins Min', style: TextStyle(color: isSelected ? Colors.white : Colors.grey.shade300, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                        selected: isSelected,
+                        selectedColor: const Color(0xFF10B981),
+                        backgroundColor: const Color(0xFF0F172A),
+                        onSelected: (val) {
+                          if (val) {
+                            setModalState(() {
+                              tempPause = mins;
+                              customController.clear();
+                            });
+                          }
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: customController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Oder eigene Minutenzahl eingeben...',
+                      hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                      filled: true,
+                      fillColor: const Color(0xFF0F172A),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.white.withOpacity(0.1))),
+                    ),
+                    onChanged: (val) {
+                      final parsed = int.tryParse(val);
+                      if (parsed != null) {
+                        setModalState(() => tempPause = parsed);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, 0),
+                  child: const Text('Keine Pause (0 Min)', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, tempPause),
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white),
+                  child: const Text('Bestätigen'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    return result ?? 0;
   }
 
   void _performCheckIn(Slot slot) {
@@ -465,7 +606,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
     _syncSlotToServer(slot, checkInTime: timeStr);
   }
 
-  void _performCheckOut(Slot slot) {
+  void _uncheckSlot(Slot slot) {
     setState(() {
       _checkedSlotIds.remove(slot.id);
       _checkedSlotTimes.remove(slot.id);
@@ -482,6 +623,16 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
   Future<void> _toggleSlotOutChecked(Slot slot, bool? value) async {
     final id = slot.id;
+    int? pauseMinutes;
+    bool? pauseIgnoriert;
+
+    if (value == true) {
+      pauseMinutes = await _showPauseSelectionDialog(slot);
+      if (pauseMinutes == 0) {
+        pauseIgnoriert = true;
+      }
+    }
+
     setState(() {
       if (value == true) {
         _checkedSlotOutIds.add(id);
@@ -499,7 +650,12 @@ class _SlotsScreenState extends State<SlotsScreen> {
     await prefs.setString('admin_checked_out_times', json.encode(_checkedSlotOutTimes));
 
     // Sync to Server
-    _syncSlotToServer(slot, checkOutTime: value == true ? _checkedSlotOutTimes[id] : "");
+    _syncSlotToServer(
+      slot,
+      checkOutTime: value == true ? _checkedSlotOutTimes[id] : "",
+      pauseMinutes: pauseMinutes,
+      pausenregelungIgnoriert: pauseIgnoriert,
+    );
   }
 
   Future<void> _updateCheckInTime(Slot slot, String time) async {
@@ -537,7 +693,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
       final double targetLat = coords?['latk'] ?? slot.latk ?? 0.0;
       final double targetLon = coords?['lonK'] ?? slot.lonK ?? 0.0;
-      final int allowedRadius = coords?['rad'] ?? 30;
+      final int allowedRadius = slot.geofenceRadius ?? slot.rad ?? coords?['rad'] ?? coords?['geofenceRadius'] ?? 50;
 
       if (targetLat == 0 || targetLon == 0) {
         debugPrint('Keine Zielkoordinaten im Objekt oder Slot hinterlegt - überspringe GPS-Check');
@@ -707,13 +863,20 @@ class _SlotsScreenState extends State<SlotsScreen> {
     );
   }
 
-  Future<void> _syncSlotToServer(Slot slot, {String? checkInTime, String? checkOutTime}) async {
+  Future<void> _syncSlotToServer(
+    Slot slot, {
+    String? checkInTime,
+    String? checkOutTime,
+    int? pauseMinutes,
+    bool? pausenregelungIgnoriert,
+  }) async {
     final Map<String, dynamic> data = {};
 
     if (checkInTime != null) {
       if (checkInTime.isEmpty) {
+        data['reset'] = true;
         data['checkin'] = null;
-        data['checkinstat'] = null;
+        data['cI'] = null;
       } else {
         data['checkin'] = formatLocalToUtcDateTime(
           localHHmm: checkInTime,
@@ -750,21 +913,35 @@ class _SlotsScreenState extends State<SlotsScreen> {
       }
     }
     if (checkOutTime != null) {
-      data['checkout'] = checkOutTime.isEmpty
-          ? null
-          : formatLocalToUtcDateTime(
-              localHHmm: checkOutTime,
-              baseDateUtc: slot.dateEnd ?? slot.dateStart,
-            );
+      if (checkOutTime.isEmpty) {
+        data['reset'] = true;
+        data['checkout'] = null;
+      } else {
+        data['checkout'] = formatLocalToUtcDateTime(
+          localHHmm: checkOutTime,
+          baseDateUtc: slot.dateEnd ?? slot.dateStart,
+        );
+        if (pauseMinutes != null) data['pauseMinutes'] = pauseMinutes;
+        if (pausenregelungIgnoriert != null) data['pausenregelungIgnoriert'] = pausenregelungIgnoriert;
+      }
     }
 
     if (data.isNotEmpty) {
       try {
         bool success = false;
-        if (data.containsKey('checkin')) {
-          success = await _apiService.checkInSlot(slot.id, checkInTime: data['checkin']);
+        if (data['reset'] == true && data.containsKey('checkin')) {
+          success = await _apiService.resetCheckIn(slot.id);
+        } else if (data['reset'] == true && data.containsKey('checkout')) {
+          success = await _apiService.resetCheckOut(slot.id);
+        } else if (data.containsKey('checkin')) {
+          success = await _apiService.checkInSlot(slot.id, checkInTime: data['checkin'], oNr: slot.oNr);
         } else if (data.containsKey('checkout')) {
-          success = await _apiService.checkOutSlot(slot.id, checkOutTime: data['checkout']);
+          success = await _apiService.checkOutSlot(
+            slot.id,
+            checkOutTime: data['checkout'],
+            pauseMinutes: pauseMinutes,
+            pausenregelungIgnoriert: pausenregelungIgnoriert,
+          );
         } else {
           success = await _apiService.patchSlot(slot.id, data);
         }
@@ -785,8 +962,8 @@ class _SlotsScreenState extends State<SlotsScreen> {
         
         // Enqueue for automatic retry
         final desc = checkInTime != null 
-            ? 'Check-In ${slot.angestellteName ?? slot.name} ($checkInTime)'
-            : 'Check-Out ${slot.angestellteName ?? slot.name} ($checkOutTime)';
+            ? (checkInTime.isEmpty ? 'Check-In zurücksetzen: ${slot.angestellteName ?? slot.name}' : 'Check-In ${slot.angestellteName ?? slot.name} ($checkInTime)')
+            : (checkOutTime != null && checkOutTime.isEmpty ? 'Check-Out zurücksetzen: ${slot.angestellteName ?? slot.name}' : 'Check-Out ${slot.angestellteName ?? slot.name} ($checkOutTime)');
         await _syncQueue.enqueue(
           slotId: slot.id,
           data: data,

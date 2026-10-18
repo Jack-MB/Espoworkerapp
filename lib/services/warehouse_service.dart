@@ -326,6 +326,7 @@ class WarehouseService {
     double quantity = 1.0,
     String? bemerkung,
     String? inventoryNumberId,
+    String? signature,
   }) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/issueDepotItem');
     final headers = await _getHeaders();
@@ -337,6 +338,7 @@ class WarehouseService {
       'quantity': quantity,
       'bemerkung': bemerkung ?? 'Worker-App Ausgabe',
       if (inventoryNumberId != null) 'inventoryNumberId': inventoryNumberId,
+      if (signature != null) 'signature': signature,
     });
 
     final response = await http.post(url, headers: headers, body: body).timeout(_timeout);
@@ -354,6 +356,7 @@ class WarehouseService {
     String? warehouseId,
     String status = 'Zurückgegeben',
     String? bemerkung,
+    String? signature,
   }) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/AppWarehouse/action/returnDepotItem');
     final headers = await _getHeaders();
@@ -363,6 +366,7 @@ class WarehouseService {
       if (warehouseId != null) 'warehouseId': warehouseId,
       'status': status,
       'bemerkung': bemerkung ?? 'Worker-App Rücknahme',
+      if (signature != null) 'signature': signature,
     });
 
     final response = await http.post(url, headers: headers, body: body).timeout(_timeout);

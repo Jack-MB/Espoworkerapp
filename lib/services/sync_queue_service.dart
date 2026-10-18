@@ -138,9 +138,34 @@ class SyncQueueService extends ChangeNotifier {
             final slotId = item['slotId'] as String;
             final data = Map<String, dynamic>.from(item['data'] as Map);
             if (data.containsKey('checkin')) {
-              success = await _apiService.checkInSlot(slotId, checkInTime: data['checkin']);
+              final checkinVal = data['checkin'] as String?;
+              final isReset = data['reset'] == true || checkinVal == null || checkinVal.isEmpty || checkinVal == '__RESET__';
+              if (isReset) {
+                success = await _apiService.resetCheckIn(slotId);
+              } else {
+                success = await _apiService.checkInSlot(
+                  slotId,
+                  checkInTime: checkinVal,
+                  oNr: data['oNr'] as String?,
+                );
+              }
             } else if (data.containsKey('checkout')) {
-              success = await _apiService.checkOutSlot(slotId, checkOutTime: data['checkout']);
+              final checkoutVal = data['checkout'] as String?;
+              final isReset = data['reset'] == true || checkoutVal == null || checkoutVal.isEmpty || checkoutVal == '__RESET__';
+              if (isReset) {
+                success = await _apiService.resetCheckOut(slotId);
+              } else {
+                final pauseMin = data['pauseMinutes'] is int
+                    ? data['pauseMinutes'] as int
+                    : int.tryParse(data['pauseMinutes']?.toString() ?? '');
+                final pauseIgnored = data['pausenregelungIgnoriert'] as bool?;
+                success = await _apiService.checkOutSlot(
+                  slotId,
+                  checkOutTime: checkoutVal,
+                  pauseMinutes: pauseMin,
+                  pausenregelungIgnoriert: pauseIgnored,
+                );
+              }
             } else {
               success = await _apiService.patchSlot(slotId, data);
             }

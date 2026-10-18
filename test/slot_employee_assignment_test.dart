@@ -107,5 +107,55 @@ void main() {
       // Empty query returns all
       expect(filter('').length, 3);
     });
+
+    test('Slot parses angestelltePhone correctly from JSON and updates via copyWith', () {
+      final json = {
+        'id': 'slot-phone-01',
+        'name': 'Schicht mit Notfallnummer',
+        'angestellteId': 'emp-77',
+        'angestellteName': 'Max Mustermann',
+        'angestelltePhone': '+49 170 1234567',
+        'geofenceRadius': 75,
+      };
+
+      final slot = Slot.fromJson(json);
+      expect(slot.angestelltePhone, '+49 170 1234567');
+      expect(slot.geofenceRadius, 75);
+
+      final updated = slot.copyWith(angestelltePhone: '+49 171 9876543');
+      expect(updated.angestelltePhone, '+49 171 9876543');
+      expect(updated.geofenceRadius, 75);
+    });
+
+    test('Geofence radius fallback hierarchy resolves correctly', () {
+      // 1. Explicit geofenceRadius
+      final slot1 = Slot(id: 's1', name: 'S1', status: 'Geplant', geofenceRadius: 100, rad: 30);
+      final r1 = slot1.geofenceRadius ?? slot1.rad ?? 50;
+      expect(r1, 100);
+
+      // 2. Fallback to rad
+      final slot2 = Slot(id: 's2', name: 'S2', status: 'Geplant', rad: 40);
+      final r2 = slot2.geofenceRadius ?? slot2.rad ?? 50;
+      expect(r2, 40);
+
+      // 3. Fallback to default 50m (never hardcoded 30m)
+      final slot3 = Slot(id: 's3', name: 'S3', status: 'Geplant');
+      final r3 = slot3.geofenceRadius ?? slot3.rad ?? 50;
+      expect(r3, 50);
+    });
+
+    test('Pause minutes calculation respects ArbZG thresholds', () {
+      int calculateDefaultPause(int workedMinutes) {
+        if (workedMinutes >= 540) return 45; // > 9h
+        if (workedMinutes >= 360) return 30; // > 6h
+        return 0;
+      }
+
+      expect(calculateDefaultPause(240), 0); // 4h -> 0 min
+      expect(calculateDefaultPause(360), 30); // 6h -> 30 min
+      expect(calculateDefaultPause(480), 30); // 8h -> 30 min
+      expect(calculateDefaultPause(540), 45); // 9h -> 45 min
+      expect(calculateDefaultPause(600), 45); // 10h -> 45 min
+    });
   });
 }

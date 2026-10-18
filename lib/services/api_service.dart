@@ -338,13 +338,20 @@ class ApiService {
   }
 
   /// Check-in für eine Schicht über dedizierte Server-Action mit Ampel-Berechnung & optionaler Ordnernummer
-  Future<bool> checkInSlot(String slotId, {String? checkInTime, String? oNr}) async {
+  Future<bool> checkInSlot(
+    String slotId, {
+    String? checkInTime,
+    String? oNr,
+    bool isReset = false,
+  }) async {
     final primaryUrl = Uri.parse('${ServerConfig().apiUrl}/Slots/action/checkin');
     try {
       final headers = await _getHeaders();
       final bodyMap = <String, dynamic>{
         'slotId': slotId,
-        if (checkInTime != null) 'checkin': checkInTime,
+        if (isReset || checkInTime == '__RESET__' || checkInTime == 'CLEAR') 'reset': true,
+        if (!isReset && checkInTime != null && checkInTime != '__RESET__' && checkInTime != 'CLEAR')
+          'checkin': checkInTime,
         if (oNr != null) 'oNr': oNr,
       };
       final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: json.encode(bodyMap));
@@ -364,6 +371,10 @@ class ApiService {
       debugPrint('checkInSlot action endpoint failed: $e, trying fallback');
     }
 
+    if (isReset || checkInTime == '__RESET__' || checkInTime == 'CLEAR') {
+      return patchSlot(slotId, {'checkin': null, 'cI': null, 'status': 'Wartend'});
+    }
+
     // Fallback: direct patchSlot (Admin / Legacy)
     final checkinVal = checkInTime ?? DateTime.now().toUtc().toIso8601String();
     final patchData = <String, dynamic>{
@@ -373,6 +384,11 @@ class ApiService {
       if (oNr != null) 'oNr': oNr,
     };
     return patchSlot(slotId, patchData);
+  }
+
+  /// Setzt den Check-in für eine Schicht zurück (uncheck)
+  Future<bool> resetCheckIn(String slotId) async {
+    return checkInSlot(slotId, isReset: true);
   }
 
   /// Aktualisiert die Ordnernummer für eine Schicht (nur Einsatzleiter / Admin).
@@ -395,8 +411,12 @@ class ApiService {
     throw Exception('Fehler beim Aktualisieren der Ordnernummer: ${response.statusCode}');
   }
 
-  /// Lädt zuweisbare Mitarbeiter für eine Schicht (gefiltert nach Kooperationspartner der Schicht)
-  Future<Map<String, dynamic>> getAssignableEmployees({required String slotId, String? search}) async {
+  /// Lädt zuweisbare Mitarbeiter für eine Schicht (gefiltert nach Kooperationspartner der Schicht oder explizitem Filter)
+  Future<Map<String, dynamic>> getAssignableEmployees({
+    required String slotId,
+    String? search,
+    String? kooperationspartnerId,
+  }) async {
     final baseUri = Uri.parse(ServerConfig().apiUrl);
     final url = Uri(
       scheme: baseUri.scheme,
@@ -406,6 +426,8 @@ class ApiService {
       queryParameters: {
         'slotId': slotId,
         if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        if (kooperationspartnerId != null && kooperationspartnerId.isNotEmpty)
+          'kooperationspartnerId': kooperationspartnerId,
       },
     );
 
@@ -417,12 +439,18 @@ class ApiService {
   }
 
   /// Weist einer Schicht einen Mitarbeiter zu (oder entfernt die Zuweisung mit angestellteId: null)
-  Future<Map<String, dynamic>> assignEmployeeToSlot({required String slotId, String? angestellteId}) async {
+  /// Unterstützt auch das gleichzeitige Wechseln des Kooperationspartners.
+  Future<Map<String, dynamic>> assignEmployeeToSlot({
+    required String slotId,
+    String? angestellteId,
+    String? kooperationspartnerId,
+  }) async {
     final url = Uri.parse('${ServerConfig().apiUrl}/Slots/action/assignEmployee');
     final headers = await _getHeaders();
     final body = json.encode({
       'slotId': slotId,
       'angestellteId': angestellteId,
+      if (kooperationspartnerId != null) 'kooperationspartnerId': kooperationspartnerId,
     });
 
     final response = await _HttpWithTimeout.post(url, headers: headers, body: body);
@@ -431,6 +459,38 @@ class ApiService {
     }
     final data = json.decode(response.body);
     throw Exception(data['message'] ?? 'Fehler beim Zuweisen des Mitarbeiters.');
+  }
+
+  /// Lädt Liste aller aktiven Kooperationspartner (Accounts mit Kürzel)
+  Future<List<Map<String, dynamic>>> getKooperationspartner() async {
+    try {
+      final baseUri = Uri.parse(ServerConfig().apiUrl);
+      final url = Uri(
+        scheme: baseUri.scheme,
+        host: baseUri.host,
+        port: baseUri.hasPort ? baseUri.port : null,
+        path: '${baseUri.path}/Account',
+        queryParameters: {
+          'where[0][type]': 'isNotNull',
+          'where[0][attribute]': 'cKrzel',
+          'where[0][value]': '',
+          'select': 'id,name,cKrzel',
+          'maxSize': '100',
+          'orderBy': 'name',
+          'order': 'asc',
+        },
+      );
+      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['list'] != null) {
+          return List<Map<String, dynamic>>.from(data['list']);
+        }
+      }
+    } catch (e) {
+      debugPrint('getKooperationspartner error: $e');
+    }
+    return [];
   }
 
   /// Lädt Schichten speziell für den Check-in Bereich:
@@ -470,16 +530,26 @@ class ApiService {
     return getSlots(startDate: start, endDate: end);
   }
 
-  /// Check-out für eine Schicht über dedizierte Server-Action
-  Future<bool> checkOutSlot(String slotId, {String? checkOutTime}) async {
+  /// Check-out für eine Schicht über dedizierte Server-Action mit Pausenunterstützung
+  Future<bool> checkOutSlot(
+    String slotId, {
+    String? checkOutTime,
+    int? pauseMinutes,
+    bool? pausenregelungIgnoriert,
+    bool isReset = false,
+  }) async {
     final primaryUrl = Uri.parse('${ServerConfig().apiUrl}/Slots/action/checkout');
     try {
       final headers = await _getHeaders();
-      final body = json.encode({
+      final body = <String, dynamic>{
         'slotId': slotId,
-        if (checkOutTime != null) 'checkout': checkOutTime,
-      });
-      final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: body);
+        if (isReset || checkOutTime == '__RESET__' || checkOutTime == 'CLEAR') 'reset': true,
+        if (!isReset && checkOutTime != null && checkOutTime != '__RESET__' && checkOutTime != 'CLEAR')
+          'checkout': checkOutTime,
+        if (pauseMinutes != null) 'pauseMinutes': pauseMinutes,
+        if (pausenregelungIgnoriert != null) 'pausenregelungIgnoriert': pausenregelungIgnoriert,
+      };
+      final response = await _HttpWithTimeout.post(primaryUrl, headers: headers, body: json.encode(body));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) return true;
@@ -496,9 +566,45 @@ class ApiService {
       debugPrint('checkOutSlot action endpoint failed: $e, trying fallback');
     }
 
+    if (isReset || checkOutTime == '__RESET__' || checkOutTime == 'CLEAR') {
+      return patchSlot(slotId, {'checkout': null});
+    }
+
     // Fallback: direct patchSlot (Admin / Legacy)
     final checkoutVal = checkOutTime ?? DateTime.now().toUtc().toIso8601String();
-    return patchSlot(slotId, {'checkout': checkoutVal});
+    final patchData = <String, dynamic>{
+      'checkout': checkoutVal,
+      if (pauseMinutes != null) 'pausenMinuten': pauseMinutes,
+      if (pauseMinutes != null) 'pausen': (pauseMinutes > 0 ? 1 : 0),
+      if (pausenregelungIgnoriert != null) 'pausenregelungIgnoriert': pausenregelungIgnoriert,
+    };
+    return patchSlot(slotId, patchData);
+  }
+
+  /// Setzt den Check-out für eine Schicht zurück
+  Future<bool> resetCheckOut(String slotId) async {
+    return checkOutSlot(slotId, isReset: true);
+  }
+
+  /// Löscht alle lokalen Slot-, Objekt-, Wachbuch- und Offline-Caches (Session-Hygiene bei Logout)
+  Future<void> clearLocalCaches() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final keysToRemove = prefs.getKeys().where((k) =>
+        k.startsWith('cached_') ||
+        k.startsWith('admin_checked_') ||
+        k.startsWith('offline_') ||
+        k == 'pending_sync_queue' ||
+        k == _cachedSlotsKey ||
+        k == _cachedSlotsMasterKey
+      ).toList();
+      for (final key in keysToRemove) {
+        await prefs.remove(key);
+      }
+      debugPrint('ApiService: Caches cleared successfully (${keysToRemove.length} keys).');
+    } catch (e) {
+      debugPrint('ApiService clearLocalCaches error: $e');
+    }
   }
 
   /// Nimmt eine Schicht an — nutzt Custom Server Action mit Validierung.

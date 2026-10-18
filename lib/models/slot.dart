@@ -9,6 +9,7 @@ class Slot {
   final String? objekteName;
   final String? angestellteId;
   final String? angestellteName;
+  final String? angestelltePhone;
   final String? accountId;
   final String? accountName;
   final String? salesOrderName;
@@ -60,6 +61,7 @@ class Slot {
     this.objekteName,
     this.angestellteId,
     this.angestellteName,
+    this.angestelltePhone,
     this.einsatzleiterId,
     this.einsatzleiterName,
     this.accountId,
@@ -108,6 +110,7 @@ class Slot {
       objekteName: json['serviceObjectName'] ?? json['objekteName'],
       angestellteId: json['angestellteId'],
       angestellteName: json['angestellteName'],
+      angestelltePhone: json['angestelltePhone']?.toString(),
       einsatzleiterId: json['einsatzleiterId'],
       einsatzleiterName: json['einsatzleiterName'],
       accountId: json['accountId'],
@@ -156,6 +159,7 @@ class Slot {
     String? objekteName,
     String? angestellteId,
     String? angestellteName,
+    String? angestelltePhone,
     String? einsatzleiterId,
     String? einsatzleiterName,
     String? accountId,
@@ -202,6 +206,7 @@ class Slot {
       objekteName: objekteName ?? this.objekteName,
       angestellteId: angestellteId ?? this.angestellteId,
       angestellteName: angestellteName ?? this.angestellteName,
+      angestelltePhone: angestelltePhone ?? this.angestelltePhone,
       einsatzleiterId: einsatzleiterId ?? this.einsatzleiterId,
       einsatzleiterName: einsatzleiterName ?? this.einsatzleiterName,
       accountId: accountId ?? this.accountId,
