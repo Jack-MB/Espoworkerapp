@@ -226,6 +226,10 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
           if (localIn != null) {
             _checkedTimes[s.id] = localIn;
           }
+        } else {
+          _checkedIn.remove(s.id);
+          _checkedTimes.remove(s.id);
+          _slotAmpeln.remove(s.id);
         }
         if (s.checkout != null && s.checkout!.isNotEmpty) {
           _checkedOut.add(s.id);
@@ -233,6 +237,9 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
           if (localOut != null) {
             _checkedOutTimes[s.id] = localOut;
           }
+        } else {
+          _checkedOut.remove(s.id);
+          _checkedOutTimes.remove(s.id);
         }
       }
 

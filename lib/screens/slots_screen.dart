@@ -325,6 +325,9 @@ class _SlotsScreenState extends State<SlotsScreen> {
           if (localIn != null) {
             _checkedSlotTimes[slot.id] = localIn;
           }
+        } else {
+          _checkedSlotIds.remove(slot.id);
+          _checkedSlotTimes.remove(slot.id);
         }
         if (slot.checkout != null && slot.checkout!.isNotEmpty) {
           _checkedSlotOutIds.add(slot.id);
@@ -332,6 +335,9 @@ class _SlotsScreenState extends State<SlotsScreen> {
           if (localOut != null) {
             _checkedSlotOutTimes[slot.id] = localOut;
           }
+        } else {
+          _checkedSlotOutIds.remove(slot.id);
+          _checkedSlotOutTimes.remove(slot.id);
         }
       }
       CheckinStateService().syncSlotsFromServer(slots);
@@ -359,6 +365,9 @@ class _SlotsScreenState extends State<SlotsScreen> {
           if (localIn != null) {
             _checkedSlotTimes[s.id] = localIn;
           }
+        } else {
+          _checkedSlotIds.remove(s.id);
+          _checkedSlotTimes.remove(s.id);
         }
         if (s.checkout != null && s.checkout!.isNotEmpty) {
           _checkedSlotOutIds.add(s.id);
@@ -366,6 +375,9 @@ class _SlotsScreenState extends State<SlotsScreen> {
           if (localOut != null) {
             _checkedSlotOutTimes[s.id] = localOut;
           }
+        } else {
+          _checkedSlotOutIds.remove(s.id);
+          _checkedSlotOutTimes.remove(s.id);
         }
       }
       CheckinStateService().syncSlotsFromServer(deltaSlots);

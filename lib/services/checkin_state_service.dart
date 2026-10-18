@@ -135,6 +135,13 @@ class CheckinStateService extends ChangeNotifier {
         _checkedInTimes[slot.id] = localIn;
         changed = true;
       }
+    } else {
+      if (_checkedInSlotIds.contains(slot.id)) {
+        _checkedInSlotIds.remove(slot.id);
+        _checkedInTimes.remove(slot.id);
+        _slotAmpeln.remove(slot.id);
+        changed = true;
+      }
     }
     if (slot.checkout != null && slot.checkout!.isNotEmpty) {
       if (!_checkedOutSlotIds.contains(slot.id)) {
@@ -144,6 +151,12 @@ class CheckinStateService extends ChangeNotifier {
       final localOut = formatUtcToLocalTime(slot.checkout);
       if (localOut != null && _checkedOutTimes[slot.id] != localOut) {
         _checkedOutTimes[slot.id] = localOut;
+        changed = true;
+      }
+    } else {
+      if (_checkedOutSlotIds.contains(slot.id)) {
+        _checkedOutSlotIds.remove(slot.id);
+        _checkedOutTimes.remove(slot.id);
         changed = true;
       }
     }
@@ -179,6 +192,13 @@ class CheckinStateService extends ChangeNotifier {
           _checkedInTimes[slot.id] = localIn;
           anyChanged = true;
         }
+      } else {
+        if (_checkedInSlotIds.contains(slot.id)) {
+          _checkedInSlotIds.remove(slot.id);
+          _checkedInTimes.remove(slot.id);
+          _slotAmpeln.remove(slot.id);
+          anyChanged = true;
+        }
       }
       if (slot.checkout != null && slot.checkout!.isNotEmpty) {
         if (!_checkedOutSlotIds.contains(slot.id)) {
@@ -188,6 +208,12 @@ class CheckinStateService extends ChangeNotifier {
         final localOut = formatUtcToLocalTime(slot.checkout);
         if (localOut != null && _checkedOutTimes[slot.id] != localOut) {
           _checkedOutTimes[slot.id] = localOut;
+          anyChanged = true;
+        }
+      } else {
+        if (_checkedOutSlotIds.contains(slot.id)) {
+          _checkedOutSlotIds.remove(slot.id);
+          _checkedOutTimes.remove(slot.id);
           anyChanged = true;
         }
       }
