@@ -3,7 +3,7 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
-## [1.3.27+53] - 2026-10-18
+## [1.3.28+54] - 2026-10-18
 
 ### Changed & Enhanced (Kachel-Optimierung, Positionsangabe, Tauschen-Symbol & Bewacher-Details-Popup)
 - **Positionsangabe auf jeder Schichtkarte (`self_checkin_screen.dart`, `slot_card_layout_details_test.dart`)**:
