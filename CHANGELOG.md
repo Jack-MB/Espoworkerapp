@@ -3,6 +3,16 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [1.3.30+56] - 2026-10-18
+
+### Fixed & Enhanced (Pünktlichkeitsampel Toleranz-Korrektur)
+- **Check-In Pünktlichkeitsbewertung (`slots_screen.dart`)**:
+  - Pünktlichkeitsampel angepasst an CRM-Backend: Stempeln vor Schichtbeginn oder pünktlich wird einheitlich als `🟢` gewertet.
+  - Das Toleranzfenster (0–10 Minuten nach Schichtbeginn) wird als `🟡` ausgewiesen.
+  - Erst Verspätungen von mehr als 10 Minuten nach geplantem Schichtbeginn schalten auf `🔴` um.
+
+---
+
 ## [1.3.29+55] - 2026-10-18
 
 ### Changed & Enhanced (Check-In Terminal Parität: Freie Namen, Springer & Tausch in der Schichtenliste)

@@ -912,12 +912,12 @@ class _SlotsScreenState extends State<SlotsScreen> {
               checkDt = checkDt.subtract(const Duration(days: 1));
             }
             final diffMinutes = checkDt.difference(startDt).inMinutes; // positive = zu spät
-            if (diffMinutes > 0) {
-              checkinStat = '🔴'; // nach Schichtbeginn
-            } else if (diffMinutes > -30) {
-              checkinStat = '🟡'; // innerhalb 30-Min-Puffer
+            if (diffMinutes > 10) {
+              checkinStat = '🔴'; // >10 Min nach Schichtbeginn (verspätet)
+            } else if (diffMinutes > 0) {
+              checkinStat = '🟡'; // 0-10 Min nach Schichtbeginn (Toleranzfenster)
             } else {
-              checkinStat = '🟢'; // ≥30 Min vor Schichtbeginn
+              checkinStat = '🟢'; // Vor oder pünktlich zu Schichtbeginn (pünktlich)
             }
           } catch (_) {}
         }
