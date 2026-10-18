@@ -3,6 +3,25 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [1.3.27+53] - 2026-10-18
+
+### Changed & Enhanced (Kachel-Optimierung, Positionsangabe, Tauschen-Symbol & Bewacher-Details-Popup)
+- **Positionsangabe auf jeder Schichtkarte (`self_checkin_screen.dart`, `slot_card_layout_details_test.dart`)**:
+  - Jede Schichtkachel zeigt nun prominent die genaue Einsatzposition (`slot.positionsname`, z. B. „Einfahrt P1“, „Einlass Nord“) als hervorgehobenes Badge (`📍 Position: ...`).
+  - Falls kein expliziter Positionsname gepflegt ist, greift ein intelligenter Fallback auf die Schichtbezeichnung.
+- **Entfernung fälschlicher „Einsatzleitung“-Badges (`self_checkin_screen.dart`)**:
+  - Das irreführende Badge `Einsatzleitung`, das zuvor aufgrund globaler Disponenten-Berechtigungen neben jedem Mitarbeiternamen eingeblendet wurde, wurde vollständig aus der Mitarbeiterzeile entfernt.
+- **Kompaktes Schichttausch-Symbol (`self_checkin_screen.dart`)**:
+  - Der Tauschen-Button wurde von einer Textschaltfläche zu einem platzsparenden, modernen Icon-Button (`Icons.swap_horiz_rounded`) verschlankt. Verhindert Textüberläufe und spart wertvollen Platz.
+- **Klickbares Bewacher-Details-Popup (`self_checkin_screen.dart`)**:
+  - Beim Klick auf das Personen-/Avatar-Symbol links neben dem Mitarbeiternamen öffnet sich ein modales Dialog-Popup (`_showEmployeeDetailsDialog`).
+  - Zeigt alle ungekürzten Mitarbeiterinformationen vollständig an: Vollständiger Name, Firma/Arbeitgeber (MB-SCC oder Kooperationspartner), Bewacher-ID (in Monospace-Schrift), Ordnernummer, Position und Schichttitel.
+- **Radikal verschlanktes Kachel-Layout & Platzersparnis (`self_checkin_screen.dart`)**:
+  - Zusammenfassung von Status-Badge (`🟢 Eingecheckt`), Ordner-Chip (`📁 #101`) und Schicht-Uhrzeit in **eine einzige Kopfzeile**.
+  - Bereinigung von überflüssigem Innenabstand (Padding von 16 auf 12-14 gestrafft, Button-Höhen von 46 auf 40 optimiert).
+- **Unit Tests (`slot_card_layout_details_test.dart`)**:
+  - 3 neue automatisierte Unit-Tests für Positionsangabe, Schichtbezeichnungs-Fallback und Firmennamensauflösung (alle 68 Tests erfolgreich).
+
 ---
 
 ## [1.3.26+52] - 2026-10-18

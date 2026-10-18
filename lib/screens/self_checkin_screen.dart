@@ -1621,6 +1621,174 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     );
   }
 
+  /// Zeigt ein informatives Dialog-Popup mit allen ungekürzten Mitarbeiterdetails
+  Future<void> _showEmployeeDetailsDialog(Slot slot) async {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    final empName = slot.angestellteName?.trim();
+    final hasEmp = empName != null && empName.isNotEmpty;
+    final firmaName = slot.kooperationspartnerName?.trim();
+    final bewacherId = slot.bewacherID?.trim();
+    final onr = slot.oNr?.trim() ?? slot.empDefaultOnr?.trim();
+    final pos = slot.positionsname?.trim() ?? slot.schichtbezeichnung?.trim();
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+        contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: isDark ? Colors.cyanAccent.withOpacity(0.15) : AppConstants.primaryColor.withOpacity(0.12),
+              child: Icon(
+                Icons.badge_rounded,
+                size: 20,
+                color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Bewacher-Informationen',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Divider(height: 1),
+              const SizedBox(height: 14),
+              _buildDetailInfoRow(
+                icon: Icons.person_rounded,
+                label: 'Name',
+                value: hasEmp ? empName : 'Noch nicht zugewiesen',
+                isBold: true,
+                isDark: isDark,
+                highlightColor: isDark ? Colors.white : Colors.black87,
+              ),
+              const SizedBox(height: 10),
+              _buildDetailInfoRow(
+                icon: Icons.business_rounded,
+                label: 'Firma / Arbeitgeber',
+                value: (firmaName != null && firmaName.isNotEmpty)
+                    ? firmaName
+                    : (slot.isInternalEmployee ? 'MB-SCC GmbH' : 'Keine Angabe'),
+                isDark: isDark,
+              ),
+              const SizedBox(height: 10),
+              _buildDetailInfoRow(
+                icon: Icons.fingerprint_rounded,
+                label: 'Bewacher-ID',
+                value: (bewacherId != null && bewacherId.isNotEmpty) ? bewacherId : 'Keine hinterlegt',
+                isMonospace: true,
+                isDark: isDark,
+                highlightColor: isDark ? Colors.cyanAccent : Colors.teal.shade800,
+              ),
+              const SizedBox(height: 10),
+              _buildDetailInfoRow(
+                icon: Icons.folder_shared_outlined,
+                label: 'Ordnernummer',
+                value: (onr != null && onr.isNotEmpty) ? '#$onr' : 'Keine zugewiesen',
+                isDark: isDark,
+              ),
+              if (pos != null && pos.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _buildDetailInfoRow(
+                  icon: Icons.pin_drop_outlined,
+                  label: 'Position',
+                  value: pos,
+                  isDark: isDark,
+                  highlightColor: isDark ? Colors.amberAccent : Colors.amber.shade900,
+                ),
+              ],
+              if (slot.objekteName != null && slot.objekteName!.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _buildDetailInfoRow(
+                  icon: Icons.place_outlined,
+                  label: 'Objekt',
+                  value: slot.objekteName!,
+                  isDark: isDark,
+                ),
+              ],
+              if (slot.isSpringer) ...[
+                const SizedBox(height: 10),
+                _buildDetailInfoRow(
+                  icon: Icons.swap_calls_rounded,
+                  label: 'Status',
+                  value: 'Springer / Vor-Ort-Ersatz',
+                  isDark: isDark,
+                  highlightColor: Colors.amber,
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(
+              foregroundColor: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+            ),
+            child: const Text('Schließen', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    bool isBold = false,
+    bool isMonospace = false,
+    Color? highlightColor,
+    required bool isDark,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: isDark ? Colors.white60 : Colors.grey.shade600),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 110,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: isDark ? Colors.white60 : Colors.grey.shade600,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: isBold ? FontWeight.bold : FontWeight.w600,
+              fontFamily: isMonospace ? 'monospace' : null,
+              color: highlightColor ?? (isDark ? Colors.white : Colors.black87),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSlotCard(Slot slot) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -1635,7 +1803,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     final ampel = _slotAmpeln[slot.id] ?? '🟢';
 
     Color statusColor = isOut ? Colors.blueGrey : (isIn ? Colors.green : Colors.orange);
-    String statusText = isOut ? '🏁 Abgeschlossen' : (isIn ? '🟢 Eingecheckt' : '⚪ Geplant / Wartend');
+    String statusText = isOut ? '🏁 Abgeschlossen' : (isIn ? '🟢 Eingecheckt' : '⚪ Geplant');
 
     final fmt = DateFormat('HH:mm');
     String? startStr, endStr;
@@ -1651,24 +1819,71 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     final canAssignEmployee = _acl.isAdmin ||
         _hasSupervisorCapabilities ||
         (slot.canEditOnr == true) ||
-        slot.isEinsatzleiter(_currentAngestellteId) ||
         (slot.isEinsatzleiterServer == true);
     final hasAssignedEmployee = slot.angestellteName != null && slot.angestellteName!.trim().isNotEmpty;
 
+    // Positionsangabe prüfen
+    final hasPositionsname = slot.positionsname != null && slot.positionsname!.trim().isNotEmpty;
+    final hasSchichtbez = slot.schichtbezeichnung != null && slot.schichtbezeichnung!.trim().isNotEmpty && slot.schichtbezeichnung != slot.name;
+    final posText = hasPositionsname ? slot.positionsname!.trim() : (hasSchichtbez ? slot.schichtbezeichnung!.trim() : null);
+
     return Card(
       key: ValueKey(slot.id),
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 10),
       elevation: 2,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         side: BorderSide(color: statusColor.withOpacity(0.35), width: 1.5),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Prominenter Mitarbeiter-Header (bei Supervisor/Admin/Team-Ansicht)
+            // 1. Kompakte einzeilige Top-Bar: Status-Badge, Ordner-Chip & Schicht-Uhrzeit
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: statusColor.withOpacity(0.4)),
+                  ),
+                  child: Text(
+                    statusText,
+                    style: TextStyle(color: statusColor, fontSize: 10.5, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                if (_hasOrdnerNummerChip(slot)) ...[
+                  const SizedBox(width: 6),
+                  _buildOrdnerNummerChip(slot, isDark),
+                ],
+                const Spacer(),
+                if (startStr != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.schedule, size: 13, color: Colors.grey),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$startStr${endStr != null ? ' – $endStr' : ''} Uhr',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // 2. Mitarbeiter-Header (bei Supervisor/Admin/Team-Ansicht)
             if (showEmployeeHeader) ...[
               if (!hasAssignedEmployee)
                 if (canAssignEmployee)
@@ -1676,8 +1891,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                     onTap: () => _showEmployeeSelectionSheet(slot),
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
                         color: isDark ? Colors.amber.shade900.withOpacity(0.18) : Colors.amber.shade50,
                         borderRadius: BorderRadius.circular(8),
@@ -1695,47 +1910,22 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                           ),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'Mitarbeiter auswählen',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                    color: isDark ? Colors.amberAccent : Colors.amber.shade900,
-                                  ),
-                                ),
-                                if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
-                                  Text(
-                                    'Firma: ${slot.kooperationspartnerName}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: isDark ? Colors.white70 : Colors.grey.shade700,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                              ],
+                            child: Text(
+                              'Mitarbeiter auswählen',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: isDark ? Colors.amberAccent : Colors.amber.shade900,
+                              ),
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                             decoration: BoxDecoration(
                               color: isDark ? Colors.amber.shade700 : Colors.amber.shade600,
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.search, size: 12, color: Colors.white),
-                                SizedBox(width: 4),
-                                Text(
-                                  'Zuweisen',
-                                  style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
+                            child: const Icon(Icons.search, size: 13, color: Colors.white),
                           ),
                         ],
                       ),
@@ -1743,8 +1933,8 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                   )
                 else
                   Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
                       color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(8),
@@ -1757,7 +1947,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                         CircleAvatar(
                           radius: 11,
                           backgroundColor: Colors.grey,
-                          child: Icon(Icons.person_outline, size: 14, color: Colors.white),
+                          child: Icon(Icons.person_outline, size: 13, color: Colors.white),
                         ),
                         SizedBox(width: 8),
                         Expanded(
@@ -1765,7 +1955,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                             'Mitarbeiter noch nicht zugewiesen',
                             style: TextStyle(
                               fontStyle: FontStyle.italic,
-                              fontSize: 13,
+                              fontSize: 12,
                               color: Colors.grey,
                             ),
                           ),
@@ -1774,218 +1964,199 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                     ),
                   )
               else
-                InkWell(
-                  onTap: canAssignEmployee ? () => _showEmployeeSelectionSheet(slot) : null,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isDark ? Colors.white.withOpacity(0.06) : Colors.blue.withOpacity(0.06),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.2),
-                      ),
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white.withOpacity(0.06) : Colors.blue.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.2),
                     ),
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 12,
-                          backgroundColor: isDark ? Colors.blueGrey.shade800 : Colors.blue.shade100,
-                          child: Icon(Icons.person, size: 15, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
+                  ),
+                  child: Row(
+                    children: [
+                      // Klickbares Personen-Symbol: Öffnet Popup mit vollständigen ungekürzten Infos
+                      InkWell(
+                        onTap: () => _showEmployeeDetailsDialog(slot),
+                        borderRadius: BorderRadius.circular(16),
+                        child: Tooltip(
+                          message: 'Mitarbeiter-Details anzeigen',
+                          child: Stack(
+                            clipBehavior: Clip.none,
                             children: [
-                              Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      slot.angestellteName!,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13,
-                                        color: isDark ? Colors.white : AppConstants.primaryColor,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  if (slot.isSpringer) ...[
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                                      decoration: BoxDecoration(
-                                        color: Colors.amber.withOpacity(0.18),
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(color: Colors.amber.shade700, width: 0.8),
-                                      ),
-                                      child: const Text(
-                                        'SPRINGER',
-                                        style: TextStyle(
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w800,
-                                          color: Colors.amber,
-                                          letterSpacing: 0.5,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ],
+                              CircleAvatar(
+                                radius: 13,
+                                backgroundColor: isDark ? Colors.blueGrey.shade800 : Colors.blue.shade100,
+                                child: Icon(Icons.person, size: 16, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
                               ),
-                              if (slot.bewacherID != null && slot.bewacherID!.trim().isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 2),
-                                  child: Text(
-                                    'Bewacher-ID: ${slot.bewacherID}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      fontFamily: 'monospace',
-                                      color: isDark ? Colors.cyanAccent : Colors.teal.shade700,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
+                              Positioned(
+                                right: -2,
+                                bottom: -2,
+                                child: Container(
+                                  padding: const EdgeInsets.all(1.5),
+                                  decoration: BoxDecoration(
+                                    color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    Icons.info_outline,
+                                    size: 9,
+                                    color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
                                   ),
                                 ),
-                              if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 1),
-                                  child: Text(
-                                    'Firma: ${slot.kooperationspartnerName}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: isDark ? Colors.white60 : Colors.grey.shade600,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
+                              ),
                             ],
                           ),
                         ),
-                        if (canAssignEmployee) ...[
-                          InkWell(
-                            onTap: () => _showEmployeeSelectionSheet(slot),
-                            borderRadius: BorderRadius.circular(6),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.4),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.swap_horiz_rounded, size: 14, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    'Tauschen',
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    slot.angestellteName!,
                                     style: TextStyle(
-                                      fontSize: 11,
                                       fontWeight: FontWeight.bold,
-                                      color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                                      fontSize: 13.5,
+                                      color: isDark ? Colors.white : AppConstants.primaryColor,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (slot.isSpringer) ...[
+                                  const SizedBox(width: 5),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Colors.amber.withOpacity(0.18),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: Colors.amber.shade700, width: 0.8),
+                                    ),
+                                    child: const Text(
+                                      'SPRINGER',
+                                      style: TextStyle(
+                                        fontSize: 8.5,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.amber,
+                                        letterSpacing: 0.4,
+                                      ),
                                     ),
                                   ),
                                 ],
+                              ],
+                            ),
+                            if (slot.kooperationspartnerName != null && slot.kooperationspartnerName!.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 1),
+                                child: Text(
+                                  'Firma: ${slot.kooperationspartnerName}',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    color: isDark ? Colors.white60 : Colors.grey.shade600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      // Tauschen-Button: Als reines Symbol ohne ausgeschriebenes Wort
+                      if (canAssignEmployee) ...[
+                        const SizedBox(width: 6),
+                        IconButton(
+                          icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                          tooltip: 'Schicht tauschen / neu zuweisen',
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.all(5),
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          style: IconButton.styleFrom(
+                            backgroundColor: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.12),
+                            foregroundColor: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                              side: BorderSide(
+                                color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.3),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 6),
-                        ],
-                        if (slot.isEinsatzleiter(_currentAngestellteId))
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.shade700.withOpacity(0.18),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Text(
-                              'Einsatzleitung',
-                              style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-
-            // Status-Badge, Ordnernummer & Zeit (Unter- und nebeneinander, kein Überlauf)
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: statusColor.withOpacity(0.4)),
+                          onPressed: () => _showEmployeeSelectionSheet(slot),
                         ),
-                        child: Text(
-                          statusText,
-                          style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      if (_hasOrdnerNummerChip(slot)) ...[
-                        const SizedBox(height: 6),
-                        _buildOrdnerNummerChip(slot, isDark),
                       ],
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                if (startStr != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.schedule, size: 14, color: Colors.grey),
-                        const SizedBox(width: 4),
-                        Text(
-                          '$startStr${endStr != null ? ' – $endStr' : ''} Uhr',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
+            ],
 
-            // Schichtbezeichnung / Name
+            // 3. Schichttitel & Positionsangabe
             Text(
               slot.name,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
-            if (slot.schichtbezeichnung != null && slot.schichtbezeichnung!.isNotEmpty && slot.schichtbezeichnung != slot.name)
+            if (posText != null) ...[
+              const SizedBox(height: 5),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF1E293B) : Colors.indigo.shade50.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: isDark ? Colors.cyanAccent.withOpacity(0.35) : AppConstants.primaryColor.withOpacity(0.35),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.pin_drop_rounded,
+                      size: 13,
+                      color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Position: ',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.white70 : Colors.grey.shade700,
+                      ),
+                    ),
+                    Flexible(
+                      child: Text(
+                        posText,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (hasPositionsname && hasSchichtbez)
               Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(
                   slot.schichtbezeichnung!,
-                  style: TextStyle(color: isDark ? Colors.white70 : Colors.black87, fontSize: 13),
+                  style: TextStyle(color: isDark ? Colors.white60 : Colors.black54, fontSize: 11.5),
                 ),
               ),
 
-            // Objekt & Einsatzort
+            // 4. Objekt & Einsatzort (kompakt)
             if (slot.objekteName != null) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 5),
               Row(
                 children: [
-                  Icon(Icons.location_on, size: 15, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+                  Icon(Icons.location_on, size: 14, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
@@ -1993,17 +2164,17 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                       style: TextStyle(
                         color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
                         fontWeight: FontWeight.w600,
-                        fontSize: 13,
+                        fontSize: 12.5,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                     decoration: BoxDecoration(
                       color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(6),
                       border: Border.all(
                         color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.25),
                       ),
@@ -2013,14 +2184,14 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                       children: [
                         Icon(
                           Icons.radar_rounded,
-                          size: 11,
+                          size: 10,
                           color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
                         ),
                         const SizedBox(width: 3),
                         Text(
                           '${slot.geofenceRadius ?? slot.rad ?? 50}m',
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 9.5,
                             fontWeight: FontWeight.bold,
                             color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
                           ),
@@ -2032,74 +2203,74 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
               ),
             ],
 
-            // Check-in / Check-out Zeitstempel
+            // 5. Check-in / Check-out Zeitstempel
             if (isIn || isOut) ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
                   color: isDark ? Colors.black26 : Colors.grey.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 child: Row(
                   children: [
                     if (isIn) ...[
-                      Text(ampel, style: const TextStyle(fontSize: 12)),
-                      const SizedBox(width: 6),
-                      Text('Check-In: $inTime Uhr', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                      Text(ampel, style: const TextStyle(fontSize: 11)),
+                      const SizedBox(width: 5),
+                      Text('Check-In: $inTime Uhr', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 11.5)),
                     ],
                     if (isOut) ...[
-                      const SizedBox(width: 16),
-                      const Icon(Icons.logout, size: 14, color: Colors.blueGrey),
+                      const SizedBox(width: 10),
+                      const Icon(Icons.logout, size: 13, color: Colors.blueGrey),
                       const SizedBox(width: 4),
-                      Text('Check-Out: $outTime Uhr', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Colors.blueGrey)),
+                      Text('Check-Out: $outTime Uhr', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 11.5, color: Colors.blueGrey)),
                     ],
                   ],
                 ),
               ),
             ],
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
 
-            // 1-Tap Aktions-Buttons (mit Inline-Ladeindikator, um Scrollen stabil zu halten)
+            // 6. 1-Tap Aktions-Buttons
             Row(
               children: [
                 if (!isIn && !isOut)
                   Expanded(
                     child: SizedBox(
-                      height: 46,
+                      height: 40,
                       child: (!CheckinStateService().isGloballyEnabled && !_acl.isAdmin)
                           ? ElevatedButton.icon(
-                              icon: const Icon(Icons.block, size: 20),
+                              icon: const Icon(Icons.block, size: 18),
                               label: const Text(
                                 'Check-In deaktiviert',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                               ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: isDark ? Colors.white12 : Colors.grey.shade400,
                                 foregroundColor: isDark ? Colors.white38 : Colors.white,
                                 elevation: 0,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                               ),
                               onPressed: null,
                             )
                           : ElevatedButton.icon(
                               icon: isThisSlotProcessing
                                   ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
+                                      width: 16,
+                                      height: 16,
                                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                     )
-                                  : const Icon(Icons.login, size: 20),
+                                  : const Icon(Icons.login, size: 18),
                               label: Text(
                                 isThisSlotProcessing ? 'Wird geprüft...' : 'Vor Ort Einchecken',
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                               ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green.shade600,
                                 foregroundColor: Colors.white,
-                                elevation: 2,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                elevation: 1.5,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                               ),
                               onPressed: _isProcessing ? null : () => _doCheckIn(slot),
                             ),
@@ -2109,13 +2280,13 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                   Expanded(
                     flex: 4,
                     child: SizedBox(
-                      height: 46,
+                      height: 40,
                       child: OutlinedButton.icon(
-                        icon: const Icon(Icons.check_circle, size: 18, color: Colors.green),
-                        label: Text('Eingecheckt ($inTime)', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12)),
+                        icon: const Icon(Icons.check_circle, size: 16, color: Colors.green),
+                        label: Text('Eingecheckt ($inTime)', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 11.5)),
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: Colors.green, width: 1.5),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
                         onPressed: null,
                       ),
@@ -2125,24 +2296,24 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                   Expanded(
                     flex: 5,
                     child: SizedBox(
-                      height: 46,
+                      height: 40,
                       child: ElevatedButton.icon(
                         icon: isThisSlotProcessing
                             ? const SizedBox(
-                                width: 18,
-                                height: 18,
+                                width: 16,
+                                height: 16,
                                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                               )
-                            : const Icon(Icons.logout, size: 18),
+                            : const Icon(Icons.logout, size: 16),
                         label: Text(
                           isThisSlotProcessing ? 'Wird beendet...' : 'Auschecken',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.red.shade700,
                           foregroundColor: Colors.white,
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          elevation: 1.5,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
                         onPressed: _isProcessing ? null : () => _doCheckOut(slot),
                       ),
@@ -2152,18 +2323,18 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                 if (isOut)
                   Expanded(
                     child: Container(
-                      height: 44,
+                      height: 38,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: isDark ? Colors.white10 : Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.check, size: 18, color: Colors.grey.shade500),
+                          Icon(Icons.check, size: 16, color: Colors.grey.shade500),
                           const SizedBox(width: 6),
-                          Text('Schicht vollständig abgeschlossen', style: TextStyle(color: Colors.grey.shade500, fontWeight: FontWeight.w600, fontSize: 13)),
+                          Text('Schicht vollständig abgeschlossen', style: TextStyle(color: Colors.grey.shade500, fontWeight: FontWeight.w600, fontSize: 12)),
                         ],
                       ),
                     ),
