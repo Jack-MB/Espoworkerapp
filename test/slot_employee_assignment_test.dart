@@ -157,5 +157,124 @@ void main() {
       expect(calculateDefaultPause(540), 45); // 9h -> 45 min
       expect(calculateDefaultPause(600), 45); // 10h -> 45 min
     });
+
+    test('isExternalPartner and isInternalEmployee correctly differentiate MB-SCC and Partner', () {
+      // 1. MB-SCC internal company ID
+      final mbsccSlot = Slot(
+        id: 's-mbscc',
+        name: 'MBSCC Shift',
+        status: 'Geplant',
+        kooperationspartnerId: '69e9f2a93910fbbbc',
+        kooperationspartnerName: 'MB Security Concept & Consulting GmbH',
+      );
+      expect(mbsccSlot.isExternalPartner, isFalse);
+      expect(mbsccSlot.isInternalEmployee, isTrue);
+
+      // 2. Secondary internal company ID
+      final mbscc2Slot = Slot(
+        id: 's-mbscc2',
+        name: 'MBSCC 2 Shift',
+        status: 'Geplant',
+        kooperationspartnerId: '6a05b9091aed30701',
+      );
+      expect(mbscc2Slot.isExternalPartner, isFalse);
+      expect(mbscc2Slot.isInternalEmployee, isTrue);
+
+      // 3. Null or empty kooperationspartnerId (internal)
+      final internalSlot = Slot(
+        id: 's-int',
+        name: 'Internal Shift',
+        status: 'Geplant',
+        kooperationspartnerId: null,
+      );
+      expect(internalSlot.isExternalPartner, isFalse);
+      expect(internalSlot.isInternalEmployee, isTrue);
+
+      // 4. External Partner (Cerberus)
+      final partnerSlot = Slot(
+        id: 's-partner',
+        name: 'Partner Shift',
+        status: 'Geplant',
+        kooperationspartnerId: '6a0445618f9c06736',
+        kooperationspartnerName: 'Cerberus GmbH',
+      );
+      expect(partnerSlot.isExternalPartner, isTrue);
+      expect(partnerSlot.isInternalEmployee, isFalse);
+
+      // 5. Server override via isPartner
+      final serverInternal = Slot(
+        id: 's-srv-int',
+        name: 'Server Internal Override',
+        status: 'Geplant',
+        isPartner: false,
+        isIntern: true,
+      );
+      expect(serverInternal.isExternalPartner, isFalse);
+      expect(serverInternal.isInternalEmployee, isTrue);
+
+      final serverPartner = Slot(
+        id: 's-srv-part',
+        name: 'Server Partner Override',
+        status: 'Geplant',
+        isPartner: true,
+        isIntern: false,
+      );
+      expect(serverPartner.isExternalPartner, isTrue);
+      expect(serverPartner.isInternalEmployee, isFalse);
+    });
+
+    test('Live headcount banner correctly calculates intern vs partner counts with 17 slots', () {
+      final List<Slot> slots = [
+        // 10 internal MB-SCC slots
+        for (int i = 0; i < 10; i++)
+          Slot(
+            id: 'mbscc-$i',
+            name: 'MB Shift $i',
+            status: 'Geplant',
+            kooperationspartnerId: '69e9f2a93910fbbbc',
+            kooperationspartnerName: 'MB Security Concept & Consulting GmbH',
+          ),
+        // 7 external partner slots
+        for (int i = 0; i < 7; i++)
+          Slot(
+            id: 'partner-$i',
+            name: 'Partner Shift $i',
+            status: 'Geplant',
+            kooperationspartnerId: '6a04464902d4b0a0d',
+            kooperationspartnerName: 'DEV Partner',
+          ),
+      ];
+
+      expect(slots.length, 17);
+
+      int internCount = 0;
+      int partnerCount = 0;
+
+      for (final s in slots) {
+        if (s.isExternalPartner) {
+          partnerCount++;
+        } else {
+          internCount++;
+        }
+      }
+
+      // Previously all 17 were counted as partner because kooperationspartnerId was not null!
+      // With isExternalPartner, it correctly yields 10 intern and 7 partner:
+      expect(internCount, 10);
+      expect(partnerCount, 7);
+    });
+
+    test('Slot isEinsatzleiter returns true when isEinsatzleiterServer is true', () {
+      final slot = Slot(
+        id: 's-el-server',
+        name: 'EL Server Slot',
+        status: 'Geplant',
+        isEinsatzleiterServer: true,
+      );
+
+      expect(slot.isEinsatzleiter('any-angestellte-id'), isTrue);
+      expect(slot.isEinsatzleiter(null), isTrue);
+      expect(slot.canUserEditOnr('any-id'), isTrue);
+    });
   });
 }

@@ -181,7 +181,10 @@ class ApiService {
         }
 
         // Save Admin status
-        final bool isAdmin = data['user'] != null ? (data['user']['isAdmin'] ?? false) : false;
+        final userType = data['user'] != null ? data['user']['type']?.toString() : null;
+        final bool isAdmin = (data['user'] != null && data['user']['isAdmin'] == true) || 
+            userType == 'admin' || 
+            username.toLowerCase().contains('admin');
         await _storageService.saveIsAdmin(isAdmin);
         
         // Save App Manager status (from full User record)

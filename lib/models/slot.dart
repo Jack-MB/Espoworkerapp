@@ -49,6 +49,9 @@ class Slot {
   final String? oNr; // Ordnernummer (z. B. "0071", "42", "99")
   final String? empDefaultOnr; // Standard-Ordnernummer des Mitarbeiters aus Profil
   final bool? canEditOnr; // Serverseitig berechnet: Darf der Nutzer die oNr bearbeiten?
+  final bool? isPartner; // Serverseitig ermittelt: Externe Partnerfirma
+  final bool? isIntern; // Serverseitig ermittelt: Intern MB-SCC
+  final bool? isEinsatzleiterServer; // Serverseitig ermittelt: Einsatzleiter oder Zuweisungs-Berechtigung
 
   Slot({
     required this.id,
@@ -79,6 +82,9 @@ class Slot {
     this.oNr,
     this.empDefaultOnr,
     this.canEditOnr,
+    this.isPartner,
+    this.isIntern,
+    this.isEinsatzleiterServer,
     this.neueobjektstrasse,
     this.neueobjektplz,
     this.neueobjektort,
@@ -133,6 +139,9 @@ class Slot {
       oNr: json['oNr']?.toString() ?? json['o_nr']?.toString(),
       empDefaultOnr: json['empDefaultOnr']?.toString() ?? json['empPersonalnummer']?.toString(),
       canEditOnr: json['canEditOnr'] == true,
+      isPartner: json['isPartner'] == true,
+      isIntern: json['isIntern'] == true,
+      isEinsatzleiterServer: json['isEinsatzleiter'] == true || json['canAssignEmployee'] == true,
       stundenanzahl: _parseDouble(json['stundenanzahl']),
       latk: _parseDouble(json['latk']),
       lonK: _parseDouble(json['lonK']),
@@ -177,6 +186,9 @@ class Slot {
     String? oNr,
     String? empDefaultOnr,
     bool? canEditOnr,
+    bool? isPartner,
+    bool? isIntern,
+    bool? isEinsatzleiterServer,
     String? neueobjektstrasse,
     String? neueobjektplz,
     String? neueobjektort,
@@ -224,6 +236,9 @@ class Slot {
       oNr: oNr ?? this.oNr,
       empDefaultOnr: empDefaultOnr ?? this.empDefaultOnr,
       canEditOnr: canEditOnr ?? this.canEditOnr,
+      isPartner: isPartner ?? this.isPartner,
+      isIntern: isIntern ?? this.isIntern,
+      isEinsatzleiterServer: isEinsatzleiterServer ?? this.isEinsatzleiterServer,
       neueobjektstrasse: neueobjektstrasse ?? this.neueobjektstrasse,
       neueobjektplz: neueobjektplz ?? this.neueobjektplz,
       neueobjektort: neueobjektort ?? this.neueobjektort,
@@ -260,6 +275,7 @@ class Slot {
 
   /// Helper: Ist der angegebene Mitarbeiter der Einsatzleiter für diese Schicht?
   bool isEinsatzleiter(String? currentAngestellteId) {
+    if (isEinsatzleiterServer == true) return true;
     if (currentAngestellteId == null || currentAngestellteId.isEmpty) return false;
     return einsatzleiterId == currentAngestellteId;
   }
@@ -270,4 +286,15 @@ class Slot {
     if (canEditOnr == true) return true;
     return isEinsatzleiter(currentAngestellteId);
   }
+
+  /// Gibt an, ob diese Schicht von einer externen Partnerfirma besetzt ist
+  bool get isExternalPartner {
+    if (isPartner != null) return isPartner!;
+    final kId = kooperationspartnerId;
+    if (kId == null || kId.isEmpty) return false;
+    return kId != '69e9f2a93910fbbbc' && kId != '6a05b9091aed30701';
+  }
+
+  /// Gibt an, ob diese Schicht intern durch MB-SCC besetzt ist
+  bool get isInternalEmployee => !isExternalPartner;
 }

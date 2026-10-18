@@ -245,7 +245,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
   bool get _hasSupervisorCapabilities {
     if (_acl.isAdmin) return true;
     if (_currentAngestellteId == null) return false;
-    return _allRelevantSlots.any((s) => s.isEinsatzleiter(_currentAngestellteId) || (s.canEditOnr == true));
+    return _allRelevantSlots.any((s) => s.isEinsatzleiter(_currentAngestellteId) || (s.canEditOnr == true) || (s.isEinsatzleiterServer == true));
   }
 
   List<Slot> get _displayedSlots {
@@ -1016,12 +1016,15 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
         setState(() {
           final idx = _allRelevantSlots.indexWhere((s) => s.id == slot.id);
           if (idx != -1) {
+            final isP = res['isPartner'] == true;
             _allRelevantSlots[idx] = _allRelevantSlots[idx].copyWith(
               angestellteId: angestellteId,
               angestellteName: angestellteName ?? '',
               oNr: res['oNr']?.toString() ?? _allRelevantSlots[idx].oNr,
               kooperationspartnerId: res['kooperationspartnerId'] ?? kooperationspartnerId ?? _allRelevantSlots[idx].kooperationspartnerId,
               kooperationspartnerName: res['kooperationspartnerName'] ?? _allRelevantSlots[idx].kooperationspartnerName,
+              isPartner: res['isPartner'] != null ? isP : (kooperationspartnerId != null && kooperationspartnerId != '69e9f2a93910fbbbc' && kooperationspartnerId != '6a05b9091aed30701' && kooperationspartnerId != '__ALL__'),
+              isIntern: res['isIntern'] != null ? !isP : (kooperationspartnerId == null || kooperationspartnerId == '69e9f2a93910fbbbc' || kooperationspartnerId == '6a05b9091aed30701'),
             );
           }
         });
@@ -1364,7 +1367,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
         waitingCount++;
       }
 
-      if (s.kooperationspartnerId != null && s.kooperationspartnerId!.isNotEmpty) {
+      if (s.isExternalPartner) {
         partnerCount++;
       } else {
         internCount++;
@@ -1589,7 +1592,11 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
         _currentAngestellteId != null &&
         slot.angestellteId != _currentAngestellteId;
     final showEmployeeHeader = _hasSupervisorCapabilities || isOtherEmployee;
-    final canAssignEmployee = slot.isEinsatzleiter(_currentAngestellteId) || _acl.isAdmin;
+    final canAssignEmployee = _acl.isAdmin ||
+        _hasSupervisorCapabilities ||
+        (slot.canEditOnr == true) ||
+        slot.isEinsatzleiter(_currentAngestellteId) ||
+        (slot.isEinsatzleiterServer == true);
     final hasAssignedEmployee = slot.angestellteName != null && slot.angestellteName!.trim().isNotEmpty;
 
     return Card(
@@ -1774,26 +1781,33 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
                           const SizedBox(width: 4),
                         ],
                         if (canAssignEmployee) ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: isDark ? Colors.white12 : Colors.grey.shade200,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.swap_horiz_rounded, size: 13, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
-                                const SizedBox(width: 3),
-                                Text(
-                                  'Tauschen',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
-                                  ),
+                          InkWell(
+                            onTap: () => _showEmployeeSelectionSheet(slot),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: (isDark ? Colors.cyanAccent : AppConstants.primaryColor).withOpacity(0.4),
                                 ),
-                              ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.swap_horiz_rounded, size: 14, color: isDark ? Colors.cyanAccent : AppConstants.primaryColor),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Tauschen',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: isDark ? Colors.cyanAccent : AppConstants.primaryColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                           const SizedBox(width: 6),
@@ -2111,10 +2125,27 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
   @override
   void initState() {
     super.initState();
-    _kpName = widget.slot.kooperationspartnerName;
-    _selectedKpId = widget.slot.kooperationspartnerId;
+    final initialKpId = widget.slot.kooperationspartnerId;
+    if (initialKpId == null || initialKpId.isEmpty || initialKpId == '69e9f2a93910fbbbc' || initialKpId == '6a05b9091aed30701') {
+      _selectedKpId = '69e9f2a93910fbbbc';
+      _kpName = 'MB Security Concept & Consulting GmbH';
+    } else {
+      _selectedKpId = initialKpId;
+      _kpName = widget.slot.kooperationspartnerName;
+    }
     _loadPartners();
     _fetchEmployees();
+  }
+
+  String? _getEffectiveKpValue() {
+    if (_selectedKpId == '__ALL__') return '__ALL__';
+    if (_selectedKpId == null || _selectedKpId == '69e9f2a93910fbbbc' || _selectedKpId == '6a05b9091aed30701') {
+      return '69e9f2a93910fbbbc';
+    }
+    if (_partners.any((p) => p['id'] == _selectedKpId)) {
+      return _selectedKpId;
+    }
+    return '__ALL__';
   }
 
   @override
@@ -2279,28 +2310,36 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String?>(
-                value: _selectedKpId,
+                value: _getEffectiveKpValue(),
                 isExpanded: true,
                 dropdownColor: isDark ? const Color(0xFF1E222B) : Colors.white,
                 hint: const Text('Alle Firmen / Intern (MB-SCC)'),
                 items: [
                   const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('MB-SCC (Intern) / Alle', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    value: '__ALL__',
+                    child: Text('🌐 Alle Firmen / Firmenübergreifend', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                   ),
-                  ..._partners.map((p) => DropdownMenuItem<String?>(
-                        value: p['id'] as String?,
-                        child: Text(
-                          p['name'] as String? ?? 'Unbekannter Partner',
-                          style: const TextStyle(fontSize: 13),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      )),
+                  const DropdownMenuItem<String?>(
+                    value: '69e9f2a93910fbbbc',
+                    child: Text('🏢 MB-SCC (Intern)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ),
+                  ..._partners
+                      .where((p) => p['id'] != '69e9f2a93910fbbbc' && p['id'] != '6a05b9091aed30701')
+                      .map((p) => DropdownMenuItem<String?>(
+                            value: p['id'] as String?,
+                            child: Text(
+                              '🤝 ${p['name'] as String? ?? 'Unbekannter Partner'}',
+                              style: const TextStyle(fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          )),
                 ],
                 onChanged: (newKpId) {
                   setState(() {
                     _selectedKpId = newKpId;
-                    if (newKpId == null) {
+                    if (newKpId == '__ALL__') {
+                      _kpName = 'Alle Firmen';
+                    } else if (newKpId == '69e9f2a93910fbbbc' || newKpId == null) {
                       _kpName = 'MB-SCC (Intern)';
                     } else {
                       final found = _partners.firstWhere((p) => p['id'] == newKpId, orElse: () => {});
@@ -2527,7 +2566,10 @@ class _EmployeeSelectionSheetState extends State<_EmployeeSelectionSheet> {
                   size: 14,
                   color: isDark ? Colors.white38 : Colors.grey.shade400,
                 ),
-          onTap: isCurrentlyAssigned ? null : () => widget.onEmployeeSelected(empId, empName, kpId: _selectedKpId),
+          onTap: isCurrentlyAssigned ? null : () {
+            final chosenKpId = (emp['kooperationspartnerId'] as String?) ?? (_selectedKpId == '__ALL__' ? null : _selectedKpId);
+            widget.onEmployeeSelected(empId, empName, kpId: chosenKpId);
+          },
         );
       },
     );

@@ -5,6 +5,29 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [1.3.24+50] - 2026-10-18
+
+### Fixed & Enhanced (Live-Kopfzähler Partner vs. Intern, Vor-Ort-Mitarbeiter-Tausch & Admin-Erkennung)
+- **Korrektur des Live-Kopfzählers vor Ort (`self_checkin_screen.dart`, `slot.dart`)**:
+  - **Behebung der Fehlzuordnung von internen Schichten zu Partnern**: Bislang wurden alle Schichten mit vorhandener `kooperationspartnerId` als Partner gezählt. Da auch interne Schichten die MB-SCC Account-ID (`69e9f2a93910fbbbc` bzw. `6a05b9091aed30701`) führen, wurden fälschlicherweise alle Schichten als Partner (17 Partner, 0 Intern) ausgewiesen.
+  - **Präzise Partner/Intern-Differenzierung (`Slot.isExternalPartner`, `Slot.isInternalEmployee`)**: Externe Partner werden nun serverseitig und clientseitig exakt abgegrenzt. Interne Schichten zählen verlässlich als „Intern“, nur echte Fremdfirmen als „Partner“.
+- **Vor-Ort-Austausch bereits eingetragener Mitarbeiter (`self_checkin_screen.dart`, `Slots.php`)**:
+  - **Aktivierung der Tauschen-Funktion (`canAssignEmployee`)**: Die Tauschen-Schaltfläche und das Mitarbeiterauswahlsheet sind nun für alle Administratoren, Supervisoren, Disponenten und Vor-Ort-Einsatzleiter verfügbar – selbst wenn Schichten in der Datenbank kein explizites `einsatzleiter_id`-Attribut hinterlegt haben.
+  - **Interaktiver „Tauschen“-Button**: Direkter Klickbereich mit Cyan-Akzent und haptischem Feedback auf besetzten Schichtkarten.
+  - **Erweitertes Firmen-Dropdown im Auswahlsheet (`_EmployeeSelectionSheet`)**:
+    - MB-SCC (Intern) als Standard für interne Schichten.
+    - Neue Option „🌐 Alle Firmen / Firmenübergreifend“ (`__ALL__`) für berechtigte Disponenten und Einsatzleiter.
+    - Automatische Übernahme der Partnerfirma des gewählten Mitarbeiters auf die Schicht.
+    - Sichere Wertauflösung (`_getEffectiveKpValue()`) zur Vermeidung von DropdownButton-Assertions.
+  - **Backend-Absicherung (`Slots.php::postActionAssignEmployee`)**:
+    - Übergabe von `skipUmplanungCheck => true` und automatisches Setzen von `umplanungGrund = 'Vor-Ort-Austausch (Einsatzleiter)'` verhindert HTTP 400 Bad Request bei Vor-Ort-Umbesetzungen.
+    - Rückgabe von `isPartner` und `isIntern` im Response-JSON zur sofortigen reaktiven Aktualisierung des Live-Kopfzählers.
+- **Admin- & Rollen-Erkennung (`api_service.dart`, `secure_storage_service.dart`)**:
+  - `api_service.dart::login` prüft nun EspoCRMs natives `type == 'admin'` anstelle des nicht-existierenden User-Attributs `isAdmin`.
+  - Fallback-Erkennung für Administrator-Accounts in `secure_storage_service.dart`.
+
+---
+
 ## [1.3.22+48] - 2026-10-18
 
 ### Added & Enhanced (Tri-Parität Check-in, EL-Kopfzähler, Partner-Wechsel & WMS Signatur)
