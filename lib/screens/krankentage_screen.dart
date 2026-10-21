@@ -543,13 +543,35 @@ class __CreateKrankmeldungFormState extends State<_CreateKrankmeldungForm> {
             ),
           ),
           const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.blue.withOpacity(0.2)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 20, color: Colors.blue.shade700),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Du hast eine Papier-AU (z.B. Notaufnahme, Krankenhaus oder Privatarzt)? Lade hier einfach ein Foto hoch!\nFalls du beim Kassenarzt warst, erfolgt die Meldung digital (eAU).',
+                    style: TextStyle(fontSize: 12, color: Colors.blue.shade900, height: 1.3),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
           OutlinedButton.icon(
             onPressed: _pickFile,
-            icon: Icon(_fileName != null ? Icons.check_circle : Icons.upload_file,
+            icon: Icon(_fileName != null ? Icons.check_circle : Icons.camera_alt,
                 color: _fileName != null ? Colors.green : null),
             label: Text(
               _fileName == null
-                  ? 'AU-Bescheinigung hochladen (optional)'
+                  ? 'Papier-AU / Notaufnahme fotografieren (optional)'
                   : 'Ausgewählt: $_fileName',
               style: TextStyle(
                 fontWeight: _fileName != null ? FontWeight.bold : FontWeight.normal,
@@ -704,13 +726,35 @@ class __UploadAUFormState extends State<_UploadAUForm> {
               IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.blue.withOpacity(0.2)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 20, color: Colors.blue.shade700),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Bescheinigung aus der Notaufnahme, dem Krankenhaus oder vom Privatarzt? Hier kannst du einfach ein Foto oder PDF hochladen.',
+                    style: TextStyle(fontSize: 12, color: Colors.blue.shade900, height: 1.3),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
           OutlinedButton.icon(
             onPressed: _pickFile,
-            icon: Icon(_fileName != null ? Icons.check_circle : Icons.upload_file,
+            icon: Icon(_fileName != null ? Icons.check_circle : Icons.camera_alt,
                 color: _fileName != null ? Colors.green : null),
             label: Text(
-              _fileName == null ? 'Datei auswählen (PDF/Bild)' : 'Ausgewählt: $_fileName',
+              _fileName == null ? 'Papier-AU / Attest auswählen (PDF/Bild)' : 'Ausgewählt: $_fileName',
               style: TextStyle(
                 fontWeight: _fileName != null ? FontWeight.bold : FontWeight.normal,
                 color: _fileName != null ? Colors.green.shade800 : null,

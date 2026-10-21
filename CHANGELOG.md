@@ -3,6 +3,16 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [1.3.31+57] - 2026-10-21
+
+### Added & Enhanced (Papier-AU & Notaufnahme-Freigabe bei Krankmeldungen)
+- **Krankmeldung & Nachreichung (`krankentage_screen.dart`)**:
+  - **Explizite Papier-AU-Unterstützung**: Mitarbeiter werden im Formular zur Erfassung und Nachreichung von Krankmeldungen nun direkt darüber informiert, dass Papier-Bescheinigungen (z.B. aus der Notaufnahme, dem Krankenhaus/Ambulanz oder vom Privatarzt) uneingeschränkt zulässig und erwünscht sind.
+  - **Intuitiver Upload**: Die Schaltfläche wurde von „AU-Bescheinigung hochladen“ zu „Papier-AU / Notaufnahme fotografieren“ mit Kamera-Icon (`Icons.camera_alt`) aktualisiert.
+  - **Hintergrund**: Nimmt Mitarbeitern nach Notfallbehandlungen die Verunsicherung bezüglich der gesetzlichen eAU und ermöglicht die sofortige Entschuldigung und Lohnfortzahlung (EFZG) ohne Verzögerung.
+
+---
+
 ## [1.3.30+56] - 2026-10-21
 
 ### Added & Changed (Offizielle Freigabe im Apple App Store: Ungelistete App-Verteilung)
