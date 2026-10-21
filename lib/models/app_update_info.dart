@@ -8,6 +8,7 @@ class AppUpdateInfo {
   final String releaseNotes;
   final String downloadUrl;
   final String? testFlightUrl;
+  final String? appStoreUrl;
   final int fileSizeBytes;
   final String sha256;
 
@@ -21,6 +22,7 @@ class AppUpdateInfo {
     required this.releaseNotes,
     required this.downloadUrl,
     this.testFlightUrl,
+    this.appStoreUrl,
     required this.fileSizeBytes,
     required this.sha256,
   });
@@ -40,6 +42,7 @@ class AppUpdateInfo {
       releaseNotes: (json['releaseNotes'] ?? '').toString(),
       downloadUrl: (json['downloadUrl'] ?? '').toString(),
       testFlightUrl: json['testFlightUrl']?.toString(),
+      appStoreUrl: json['appStoreUrl']?.toString() ?? json['testFlightUrl']?.toString(),
       fileSizeBytes: json['fileSizeBytes'] is int
           ? json['fileSizeBytes'] as int
           : int.tryParse(json['fileSizeBytes']?.toString() ?? '0') ?? 0,

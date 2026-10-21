@@ -3,7 +3,21 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
-## [1.3.30+56] - 2026-10-18
+## [1.3.30+56] - 2026-10-21
+
+### Added & Changed (Offizielle Freigabe im Apple App Store: Ungelistete App-Verteilung)
+- **Offizieller Apple App Store Release (`https://apps.apple.com/us/app/espoworker/id6762371770`)**:
+  - Offizielle Genehmigung und Freigabe durch Apple zur ungelisteten App-Verteilung (App-ID: `6762371770`).
+  - **OTA-Update Service & Dialog (`app_update_service.dart`, `app_update_dialog.dart`)**:
+    - Weiterleitung auf iOS erfolgt ab sofort primär auf den offiziellen Apple App Store Link (`appStoreUrl`), mit Rückwärtskompatibilität zu älteren Versionen.
+    - Dialog-Button-Text auf iOS von „In TestFlight öffnen“ auf „Im App Store öffnen“ umgestellt.
+    - Fehlertext bei Öffnen des Links angepasst.
+  - **Model (`app_update_info.dart`)**:
+    - Neue Property `appStoreUrl` mit automatischem Fallback auf `testFlightUrl` und `downloadUrl`.
+  - **Constants (`constants.dart`)**:
+    - Version auf `1.3.30` und BuildNumber auf `56` synchronisiert.
+  - **Automatisierte Tests (`app_update_info_test.dart`)**:
+    - 3 neue Unit-Tests für JSON-Parsing, App Store Priorisierung und Abwärtskompatibilität (75 Tests insgesamt bestanden).
 
 ### Fixed & Enhanced (Pünktlichkeitsampel Toleranz-Korrektur)
 - **Check-In Pünktlichkeitsbewertung (`slots_screen.dart`)**:

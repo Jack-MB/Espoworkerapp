@@ -33,7 +33,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       final success = await AppUpdateService().openTestFlightOrStore(widget.updateInfo);
       if (!success && mounted) {
         setState(() {
-          _errorMessage = 'Link konnte nicht geöffnet werden. Bitte öffnen Sie TestFlight manuell.';
+          _errorMessage = 'Link konnte nicht geöffnet werden. Bitte öffnen Sie den App Store manuell.';
         });
       }
       return;
@@ -322,7 +322,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                         child: Text(
                           _isWeb 
                               ? 'Jetzt neu laden'
-                              : (_isIOS ? 'In TestFlight öffnen' : 'Jetzt aktualisieren'),
+                              : (_isIOS ? 'Im App Store öffnen' : 'Jetzt aktualisieren'),
                           style: const TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.bold,

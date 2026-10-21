@@ -188,11 +188,15 @@ class AppUpdateService {
     }
   }
 
-  /// Öffnet den TestFlight Public Link oder Store auf iOS
+  /// Öffnet den Apple App Store (oder TestFlight Fallback) auf iOS
   Future<bool> openTestFlightOrStore(AppUpdateInfo info) async {
-    final targetUrl = info.testFlightUrl?.isNotEmpty == true 
-        ? info.testFlightUrl! 
-        : info.downloadUrl;
+    final targetUrl = info.appStoreUrl?.isNotEmpty == true
+        ? info.appStoreUrl!
+        : (info.testFlightUrl?.isNotEmpty == true
+            ? info.testFlightUrl!
+            : info.downloadUrl);
+
+    if (targetUrl.isEmpty) return false;
 
     final uri = Uri.parse(targetUrl);
     if (await canLaunchUrl(uri)) {
