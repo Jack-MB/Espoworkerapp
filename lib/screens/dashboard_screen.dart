@@ -2065,6 +2065,53 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                           Text('Eingecheckt um $checkInTime', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.green)),
                         ]),
                       ),
+                    if (isCheckedIn && obj.requiresAlleinarbeitConsent)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade900.withOpacity(0.18),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.amber.shade600),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded, color: Colors.amber.shade600, size: 20),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Text(
+                                    'DGUV V23: Schutz-Einwilligung ausstehend!',
+                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  final consentGiven = await showAlleinarbeitConsentDialog(context, obj);
+                                  if (consentGiven == true) {
+                                    final success = await _apiService.confirmAlleinarbeitConsent(slotId: obj.id);
+                                    if (success) {
+                                      setState(() {
+                                        obj.alleinarbeitConsentAt = DateTime.now().toUtc().toIso8601String();
+                                      });
+                                    }
+                                  }
+                                },
+                                icon: const Icon(Icons.security, size: 16),
+                                label: const Text('Jetzt DGUV-Schutz bestätigen', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700, foregroundColor: Colors.black),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     if (isCheckedOut)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),

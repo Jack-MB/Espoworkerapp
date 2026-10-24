@@ -18,7 +18,7 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 - **Wiederverwendbarer Einwilligungsdialog (`alleinarbeit_consent_dialog.dart`) & All-Screen Check-In**:
   - Dialog erscheint **nur und erst beim tatsächlichen Check-In** auf einer Schicht mit aktivem Alleinarbeiterschutz.
   - Vor dem Einchecken erfolgt die revisionssichere Erfassung der Einwilligung an `/AppLiveTracking/action/consent` (DGUV Vorschrift 23 § 8 & § 5 ArbSchG, DSGVO-Hinweis auf 14-Tage-Löschung).
-  - **Aktiver Schicht-Schutz & Nachträgliche Einwilligung**: Falls eine Schicht nachträglich auf Alleinarbeit gesetzt wurde oder der Mitarbeiter bereits eingecheckt ist, fordert die App beim Laden der Schichtansicht automatisch zur Bestätigung auf. Zudem ist das Alleinarbeit-Badge interaktiv und weist mit Warndreieck auf noch ausstehende DGUV-Einwilligungen hin.
+  - **Aktiver Schicht-Schutz & Nachträgliche Einwilligung**: Falls eine Schicht nachträglich auf Alleinarbeit gesetzt wurde oder der Mitarbeiter bereits eingecheckt ist, fordert die App beim Laden der Schichtansicht automatisch zur Bestätigung auf. Zudem weist im Dashboard ein Warnbanner direkt beim aktiven Dienst auf noch ausstehende DGUV-Einwilligungen hin und ermöglicht die Ein-Klick-Quittierung. Das Alleinarbeit-Badge in der Liste ist interaktiv.
 - **Automatischer Lebenszyklus & Stopp beim Check-Out**:
   - Tracking startet erst nach erfolgter Zustimmung und erfolgreichem Check-In.
   - Beim Check-Out oder Undo-Checkin wird das Tracking sofort und unwiderruflich beendet.
