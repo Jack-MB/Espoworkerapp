@@ -3,7 +3,7 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
-## [1.3.33+59] - 2026-10-24
+## [1.3.34+60] - 2026-10-24
 
 ### Added & Enhanced (DGUV V23 Alleinarbeiterschutz & Intelligentes Intervall-Tracking)
 - **Zeitunabhängige Alleinarbeit & Strikte Check-In-Bedingung (`Slot.requiresAlleinarbeitConsent`)**:
