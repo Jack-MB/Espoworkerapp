@@ -206,4 +206,46 @@ class NotificationService {
       payload: payload,
     );
   }
+
+  Future<void> showOngoingTrackingNotification({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    if (!_initialized || _plugin == null) return;
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'espo_tracking_channel',
+      'Alleinarbeiterschutz (DGUV V23)',
+      channelDescription: 'Aktiver Alleinarbeiterschutz & periodische Standortkontrolle',
+      importance: Importance.low,
+      priority: Priority.low,
+      ongoing: true,
+      autoCancel: false,
+      showWhen: true,
+      icon: '@mipmap/ic_launcher',
+    );
+
+    const NotificationDetails details = NotificationDetails(
+      android: androidDetails,
+      iOS: DarwinNotificationDetails(
+        presentAlert: false,
+        presentBadge: false,
+        presentSound: false,
+      ),
+    );
+
+    await _plugin!.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: details,
+      payload: 'Slots',
+    );
+  }
+
+  Future<void> cancelNotification(int id) async {
+    if (!_initialized || _plugin == null) return;
+    await _plugin!.cancel(id: id);
+  }
 }

@@ -309,12 +309,87 @@ class ApiService {
   Future<Slot?> getSlotById(String id) async {
     final url = Uri.parse(
         '${ServerConfig().apiUrl}/Slots/$id'
-        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,color,kooperationspartnerId,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,geofenceRadius,rad,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus');
+        '?select=id,name,status,dateStart,dateEnd,schichtbezeichnung,objekteId,objekteName,angestellteId,angestellteName,accountId,accountName,salesOrderName,positionsname,firmaFarbcode,color,kooperationspartnerId,kooperationspartnerName,stundenanzahl,checkin,checkout,neueobjektstrasse,neueobjektplz,neueobjektort,firmastrasse,firmaplz,firmaort,latk,lonK,geofenceRadius,rad,bewacherID,personalausweisnummer,kleidung,kleidungAnmerkungen,neueobjektkleidung,neueobjektkleidunganmerkung,annahmeStatus,isAlleinarbeit,alleinarbeitIntervallMinuten,alleinarbeitConsentAt');
     final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
     if (response.statusCode == 200) {
       return Slot.fromJson(json.decode(response.body));
     }
     return null;
+  }
+
+  /// Sendet periodischen GPS-Live-Tracking Ping für DGUV V23 Alleinarbeitsschichten
+  Future<bool> sendLiveTrackingPing({
+    required String slotId,
+    required double latitude,
+    required double longitude,
+    double? accuracy,
+    int? batteryLevel,
+    String? device,
+    DateTime? recordedAt,
+  }) async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/AppLiveTracking/action/ping');
+      final payload = {
+        'slotId': slotId,
+        'latitude': latitude,
+        'longitude': longitude,
+        'accuracy': accuracy,
+        'batteryLevel': batteryLevel,
+        'device': device,
+        'recordedAt': (recordedAt ?? DateTime.now().toUtc()).toIso8601String(),
+      };
+      final response = await _HttpWithTimeout.post(
+        url,
+        headers: await _getHeaders(),
+        body: json.encode(payload),
+      );
+      if (response.statusCode == 200) {
+        return true;
+      }
+      // Fallback auf Route ohne /action/
+      final fallbackUrl = Uri.parse('${ServerConfig().apiUrl}/AppLiveTracking/ping');
+      final fbResponse = await _HttpWithTimeout.post(
+        fallbackUrl,
+        headers: await _getHeaders(),
+        body: json.encode(payload),
+      );
+      return fbResponse.statusCode == 200;
+    } catch (e) {
+      debugPrint('sendLiveTrackingPing error: $e');
+      return false;
+    }
+  }
+
+  /// Dokumentiert DGUV V23 / DSGVO-Einwilligung beim Schicht-Check-In
+  Future<bool> confirmAlleinarbeitConsent({
+    required String slotId,
+    String? device,
+  }) async {
+    try {
+      final url = Uri.parse('${ServerConfig().apiUrl}/AppLiveTracking/action/consent');
+      final payload = {
+        'slotId': slotId,
+        'device': device,
+      };
+      final response = await _HttpWithTimeout.post(
+        url,
+        headers: await _getHeaders(),
+        body: json.encode(payload),
+      );
+      if (response.statusCode == 200) {
+        return true;
+      }
+      final fallbackUrl = Uri.parse('${ServerConfig().apiUrl}/AppLiveTracking/consent');
+      final fbResponse = await _HttpWithTimeout.post(
+        fallbackUrl,
+        headers: await _getHeaders(),
+        body: json.encode(payload),
+      );
+      return fbResponse.statusCode == 200;
+    } catch (e) {
+      debugPrint('confirmAlleinarbeitConsent error: $e');
+      return false;
+    }
   }
 
   Future<dynamic> getMetadata() async {

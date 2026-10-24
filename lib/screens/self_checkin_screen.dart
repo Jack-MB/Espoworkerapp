@@ -11,6 +11,8 @@ import '../services/secure_storage_service.dart';
 import '../services/checkin_state_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_queue_service.dart';
+import '../services/location_tracking_service.dart';
+import '../widgets/alleinarbeit_consent_dialog.dart';
 import '../core/constants.dart';
 import '../utils/espo_date.dart';
 
@@ -391,6 +393,24 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
       } catch (_) {}
     }
 
+    // DGUV V23 Alleinarbeiterschutz: Zustimmung vor dem Check-In einholen (STRIKT NUR für Nachtschichten mit Alleinarbeit)
+    if (slot.isAlleinarbeitNachtschicht && (slot.alleinarbeitConsentAt == null || slot.alleinarbeitConsentAt!.isEmpty)) {
+      final consentGiven = await showAlleinarbeitConsentDialog(context, slot);
+      if (consentGiven != true) {
+        if (mounted) {
+          setState(() => _processingSlotId = null);
+          _showErrorSnackbar('Check-In abgebrochen: Für Alleinarbeitsschichten ist die Zustimmung zum Schutz-Tracking gemäß DGUV V23 erforderlich.');
+        }
+        return;
+      }
+
+      // Revisionssichere Einwilligung an den Server senden
+      final success = await _api.confirmAlleinarbeitConsent(slotId: slot.id);
+      if (success) {
+        slot.alleinarbeitConsentAt = DateTime.now().toUtc().toIso8601String();
+      }
+    }
+
     try {
       final res = await CheckinStateService().performCheckIn(
         slot,
@@ -416,6 +436,16 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
             }
           }
         });
+
+        // Live-Tracking für Alleinarbeit starten (STRIKT nur für Nachtschichten mit Alleinarbeit)
+        if (slot.isAlleinarbeitNachtschicht) {
+          LocationTrackingService().startTracking(
+            slotId: slot.id,
+            intervalMinutes: slot.alleinarbeitIntervallMinuten,
+            objectName: slot.accountName ?? slot.objekteName,
+          );
+        }
+
         if (isOffline) {
           _showSuccessSnackbar('✅ Vor Ort eingecheckt! (Offline gespeichert – synchronisiert automatisch)');
         } else {
@@ -655,6 +685,10 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
           _checkedOutTimes[slot.id] = timeStr;
         });
         final targetName = slot.angestellteName != null ? ' (${slot.angestellteName})' : '';
+        if (LocationTrackingService().activeSlotId == slot.id) {
+          LocationTrackingService().stopTracking();
+        }
+
         if (isOffline) {
           _showSuccessSnackbar('👋 Ausgecheckt! (Offline gespeichert – synchronisiert automatisch)');
         } else {

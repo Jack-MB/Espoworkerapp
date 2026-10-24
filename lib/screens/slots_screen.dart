@@ -10,6 +10,8 @@ import '../services/sync_queue_service.dart';
 import '../models/slot.dart';
 import '../services/acl_service.dart';
 import '../services/checkin_state_service.dart';
+import '../services/location_tracking_service.dart';
+import '../widgets/alleinarbeit_consent_dialog.dart';
 import '../utils/espo_date.dart';
 
 class SlotsScreen extends StatefulWidget {
@@ -325,6 +327,16 @@ class _SlotsScreenState extends State<SlotsScreen> {
           if (localIn != null) {
             _checkedSlotTimes[slot.id] = localIn;
           }
+          // Alleinarbeiterschutz aktiv halten, falls Nachtschicht mit Alleinarbeit aktiv ist
+          if (slot.isAlleinarbeitNachtschicht && (slot.checkout == null || slot.checkout!.isEmpty)) {
+            if (!LocationTrackingService().isTracking) {
+              LocationTrackingService().startTracking(
+                slotId: slot.id,
+                intervalMinutes: slot.alleinarbeitIntervallMinuten,
+                objectName: slot.accountName ?? slot.objekteName,
+              );
+            }
+          }
         } else {
           _checkedSlotIds.remove(slot.id);
           _checkedSlotTimes.remove(slot.id);
@@ -455,7 +467,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
       // GPS Geofence Check
       final isValid = await _checkLocationAccess(slot);
       if (!isValid) return;
-      _performCheckIn(slot);
+      await _performCheckIn(slot);
     } else {
       _uncheckSlot(slot);
     }
@@ -602,7 +614,29 @@ class _SlotsScreenState extends State<SlotsScreen> {
     return result ?? 0;
   }
 
-  void _performCheckIn(Slot slot) {
+  Future<void> _performCheckIn(Slot slot) async {
+    // DGUV V23 Alleinarbeiterschutz: Zustimmung vor dem Check-In einholen (NUR für Nachtschichten mit Alleinarbeit)
+    if (slot.isAlleinarbeitNachtschicht && (slot.alleinarbeitConsentAt == null || slot.alleinarbeitConsentAt!.isEmpty)) {
+      final consentGiven = await showAlleinarbeitConsentDialog(context, slot);
+      if (consentGiven != true) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Check-In abgebrochen: Für Alleinarbeitsschichten ist die Zustimmung zum Schutz-Tracking gemäß DGUV V23 erforderlich.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Consent im Backend revisionssicher protokollieren
+      final success = await _apiService.confirmAlleinarbeitConsent(slotId: slot.id);
+      if (success) {
+        slot.alleinarbeitConsentAt = DateTime.now().toUtc().toIso8601String();
+      }
+    }
+
     final id = slot.id;
     final now = DateTime.now();
     final timeStr = DateFormat('HH:mm').format(now);
@@ -616,9 +650,21 @@ class _SlotsScreenState extends State<SlotsScreen> {
 
     _saveLocalPresence();
     _syncSlotToServer(slot, checkInTime: timeStr);
+
+    // Live-Tracking für Alleinarbeit starten (STRIKT nur für Nachtschichten mit Alleinarbeit)
+    if (slot.isAlleinarbeitNachtschicht) {
+      LocationTrackingService().startTracking(
+        slotId: slot.id,
+        intervalMinutes: slot.alleinarbeitIntervallMinuten,
+        objectName: slot.accountName ?? slot.objekteName,
+      );
+    }
   }
 
   void _uncheckSlot(Slot slot) {
+    if (LocationTrackingService().activeSlotId == slot.id) {
+      LocationTrackingService().stopTracking();
+    }
     setState(() {
       _checkedSlotIds.remove(slot.id);
       _checkedSlotTimes.remove(slot.id);
@@ -639,6 +685,9 @@ class _SlotsScreenState extends State<SlotsScreen> {
     bool? pauseIgnoriert;
 
     if (value == true) {
+      if (LocationTrackingService().activeSlotId == slot.id) {
+        LocationTrackingService().stopTracking();
+      }
       pauseMinutes = await _showPauseSelectionDialog(slot);
       if (pauseMinutes == 0) {
         pauseIgnoriert = true;
@@ -668,6 +717,17 @@ class _SlotsScreenState extends State<SlotsScreen> {
       pauseMinutes: pauseMinutes,
       pausenregelungIgnoriert: pauseIgnoriert,
     );
+
+    // Falls Checkout zurückgenommen wurde und Schicht noch eingecheckt ist, Tracking reaktivieren
+    if (value == false && slot.isAlleinarbeitNachtschicht && _checkedSlotIds.contains(slot.id)) {
+      if (!LocationTrackingService().isTracking) {
+        LocationTrackingService().startTracking(
+          slotId: slot.id,
+          intervalMinutes: slot.alleinarbeitIntervallMinuten,
+          objectName: slot.accountName ?? slot.objekteName,
+        );
+      }
+    }
   }
 
   Future<void> _updateCheckInTime(Slot slot, String time) async {
@@ -1583,6 +1643,37 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                     ),
                                                   ),
                                                 ],
+                                                // Alleinarbeiterschutz Badge (NUR bei Nachtschichten mit Alleinarbeit)
+                                                if (slot.isAlleinarbeitNachtschicht) ...[
+                                                  const SizedBox(width: 6),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFF10B981).withOpacity(0.15),
+                                                      border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4)),
+                                                      borderRadius: BorderRadius.circular(8),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        const Icon(
+                                                          Icons.security,
+                                                          size: 11,
+                                                          color: Color(0xFF10B981),
+                                                        ),
+                                                        const SizedBox(width: 3),
+                                                        Text(
+                                                          'Alleinarbeit (${slot.alleinarbeitIntervallMinuten}m)',
+                                                          style: const TextStyle(
+                                                            fontSize: 10,
+                                                            fontWeight: FontWeight.w600,
+                                                            color: Color(0xFF10B981),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
                                               ],
                                             ),
                                             const SizedBox(height: 6),
@@ -2277,6 +2368,12 @@ class _SlotsScreenState extends State<SlotsScreen> {
                     ),
                   if (slot.positionsname != null)
                     _buildDetailRow(Icons.work, 'Position', slot.positionsname!),
+                  if (slot.isAlleinarbeitNachtschicht)
+                    _buildDetailRow(
+                      Icons.shield_outlined,
+                      'Alleinarbeiterschutz',
+                      'Aktiviert (${slot.alleinarbeitIntervallMinuten} Min. Intervall)',
+                    ),
                   if (kleidungInfo != null && kleidungInfo!.isNotEmpty)
                     _buildDetailRow(Icons.checkroom, 'Arbeitskleidung', kleidungInfo!),
                   if (!kleidungLoaded)

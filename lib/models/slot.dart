@@ -1,3 +1,5 @@
+import '../utils/espo_date.dart';
+
 class Slot {
   final String id;
   final String name;
@@ -55,6 +57,11 @@ class Slot {
   final String? ersatzNotiz; // Vor-Ort-Ersatz / Tausch / Springer-Notiz
   final bool? isManualSpringer; // Manuell erfasster Springer ohne Profil
 
+  // DGUV V23 Alleinarbeiterschutz
+  final bool isAlleinarbeit;
+  final int alleinarbeitIntervallMinuten;
+  String? alleinarbeitConsentAt;
+
   bool get isSpringer => isManualSpringer == true || (ersatzNotiz != null && ersatzNotiz!.trim().isNotEmpty);
 
   Slot({
@@ -108,6 +115,9 @@ class Slot {
     this.annahmeStatus,
     this.ersatzNotiz,
     this.isManualSpringer,
+    this.isAlleinarbeit = false,
+    this.alleinarbeitIntervallMinuten = 10,
+    this.alleinarbeitConsentAt,
   });
 
   factory Slot.fromJson(Map<String, dynamic> json) {
@@ -189,6 +199,9 @@ class Slot {
       annahmeStatus: json['annahmeStatus']?.toString(),
       ersatzNotiz: rawErsatz,
       isManualSpringer: isManual,
+      isAlleinarbeit: json['isAlleinarbeit'] == true || json['is_alleinarbeit'] == true || json['isAlleinarbeit'] == 1 || json['is_alleinarbeit'] == 1 || json['isAlleinarbeit'] == '1' || json['is_alleinarbeit'] == '1' || json['isAlleinarbeit'] == 'true' || json['is_alleinarbeit'] == 'true',
+      alleinarbeitIntervallMinuten: int.tryParse(json['alleinarbeitIntervallMinuten']?.toString() ?? json['alleinarbeit_intervall_minuten']?.toString() ?? '') ?? 10,
+      alleinarbeitConsentAt: json['alleinarbeitConsentAt']?.toString() ?? json['alleinarbeit_consent_at']?.toString(),
     );
   }
 
@@ -243,6 +256,9 @@ class Slot {
     String? annahmeStatus,
     String? ersatzNotiz,
     bool? isManualSpringer,
+    bool? isAlleinarbeit,
+    int? alleinarbeitIntervallMinuten,
+    String? alleinarbeitConsentAt,
   }) {
     return Slot(
       id: id ?? this.id,
@@ -295,6 +311,9 @@ class Slot {
       annahmeStatus: annahmeStatus ?? this.annahmeStatus,
       ersatzNotiz: ersatzNotiz ?? this.ersatzNotiz,
       isManualSpringer: isManualSpringer ?? this.isManualSpringer,
+      isAlleinarbeit: isAlleinarbeit ?? this.isAlleinarbeit,
+      alleinarbeitIntervallMinuten: alleinarbeitIntervallMinuten ?? this.alleinarbeitIntervallMinuten,
+      alleinarbeitConsentAt: alleinarbeitConsentAt ?? this.alleinarbeitConsentAt,
     );
   }
 
@@ -382,4 +401,41 @@ class Slot {
   bool get hasErsatzOderTausch {
     return isSpringer || originalGeplantName != null || springerName != null;
   }
+
+  /// Prüft, ob diese Schicht eine Nachtschicht ist (Name/Bezeichnung enthält "Nacht",
+  /// Beginn ab 19:00 oder vor 05:00 Uhr, oder Überschreiten von Mitternacht).
+  bool get isNachtschicht {
+    final text = '${name} ${schichtbezeichnung ?? ''}'.toLowerCase();
+    if (text.contains('nacht')) {
+      return true;
+    }
+
+    if (dateStart != null && dateStart!.trim().isNotEmpty) {
+      try {
+        final startLocal = espoUtcToLocal(dateStart!);
+        final startHour = startLocal.hour;
+
+        if (startHour >= 19 || startHour < 5) {
+          return true;
+        }
+
+        if (dateEnd != null && dateEnd!.trim().isNotEmpty) {
+          final endLocal = espoUtcToLocal(dateEnd!);
+
+          if (endLocal.day != startLocal.day || endLocal.isBefore(startLocal)) {
+            return true;
+          }
+
+          if (endLocal.hour <= 7 && startHour >= 18) {
+            return true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    return false;
+  }
+
+  /// Alleinarbeiterschutz greift STRIKT nur, wenn Alleinarbeit aktiviert UND es eine Nachtschicht ist!
+  bool get isAlleinarbeitNachtschicht => isAlleinarbeit && isNachtschicht;
 }

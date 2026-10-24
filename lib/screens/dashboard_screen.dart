@@ -21,6 +21,8 @@ import 'dart:convert';
 import 'self_checkin_screen.dart';
 import '../services/checkin_state_service.dart';
 import '../services/location_service.dart';
+import '../services/location_tracking_service.dart';
+import '../widgets/alleinarbeit_consent_dialog.dart';
 import 'slots_screen.dart';
 import 'wachbuch_list_screen.dart';
 import 'urlaub_screen.dart';
@@ -2257,11 +2259,32 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       return;
     }
 
+    // DGUV V23 Alleinarbeiterschutz: Zustimmung vor dem Check-In einholen (NUR für Nachtschichten mit Alleinarbeit)
+    if (slot.isAlleinarbeitNachtschicht && (slot.alleinarbeitConsentAt == null || slot.alleinarbeitConsentAt!.isEmpty)) {
+      final consentGiven = await showAlleinarbeitConsentDialog(context, slot);
+      if (consentGiven != true) {
+        if (mounted) _showMsg('Check-In abgebrochen: Zustimmung zum DGUV V23 Schutz-Tracking erforderlich.', Colors.orange.shade800);
+        return;
+      }
+
+      final success = await _apiService.confirmAlleinarbeitConsent(slotId: slot.id);
+      if (success) {
+        slot.alleinarbeitConsentAt = DateTime.now().toUtc().toIso8601String();
+      }
+    }
+
     final now = DateTime.now();
     final timeStr = DateFormat('HH:mm').format(now);
 
     try {
       await CheckinStateService().performCheckIn(slot);
+      if (slot.isAlleinarbeitNachtschicht) {
+        LocationTrackingService().startTracking(
+          slotId: slot.id,
+          intervalMinutes: slot.alleinarbeitIntervallMinuten,
+          objectName: slot.accountName ?? slot.objekteName,
+        );
+      }
       if (mounted) _showMsg('✅ Erfolgreich eingecheckt', Colors.green);
     } catch (e) {
       if (e.toString().contains('deaktiviert') || e.toString().contains('Berechtigung')) {
@@ -2285,6 +2308,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
     try {
       await CheckinStateService().performCheckOut(slot);
+      if (LocationTrackingService().activeSlotId == slot.id) {
+        LocationTrackingService().stopTracking();
+      }
       if (mounted) _showMsg('✅ Erfolgreich ausgecheckt', Colors.green);
     } catch (e) {
       if (e.toString().contains('deaktiviert') || e.toString().contains('Berechtigung')) {
