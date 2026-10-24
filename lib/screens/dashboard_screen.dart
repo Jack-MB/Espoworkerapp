@@ -1780,7 +1780,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       }
     }
 
-    // Bereitschaften – immer sichtbar, orange Farbe
+    // Bereitschaften – immer sichtbar (kein Toggle), Amber-Gold Farbcode
     for (var b in bereitschaften) {
       if (b.dateStart != null && b.dateEnd != null) {
         try {
@@ -1799,7 +1799,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             from: startDay,
             to: endDay,
             isAllDay: true,
-            background: const Color(0xFFFF8C00), // orange
+            background: const Color(0xFFF59E0B), // Amber-Gold
             originalObject: b,
           ));
         } catch (_) {}
@@ -1990,7 +1990,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            Icon(Icons.event_note, color: event.background),
+            Icon(
+              obj is Bereitschaft ? Icons.shield : Icons.event_note,
+              color: obj is Bereitschaft ? const Color(0xFFF59E0B) : event.background,
+            ),
             const SizedBox(width: 8),
             Expanded(child: Text(event.title, style: const TextStyle(fontWeight: FontWeight.bold))),
           ],
@@ -2141,9 +2144,17 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
             if (obj is Bereitschaft) ...[
               _buildDetailRow(Icons.shield_outlined, 'Typ', 'Bereitschaft'),
-              _buildDetailRow(Icons.info_outline, 'Status', obj.status),
-              if (obj.description != null && obj.description!.isNotEmpty)
-                _buildDetailRow(Icons.description, 'Beschreibung', obj.description!),
+              _buildDetailRow(
+                Icons.info_outline,
+                'Status',
+                obj.status == 'Planned'
+                    ? 'Geplant'
+                    : (obj.status == 'Held'
+                        ? 'Durchgeführt'
+                        : (obj.status == 'Not Held' ? 'Nicht durchgeführt' : obj.status)),
+              ),
+              if (obj.description != null && obj.description!.trim().isNotEmpty)
+                _buildDetailRow(Icons.notes, 'Notiz', obj.description!.trim()),
             ],
 
             if (obj is InterneTaetigkeit) ...[
@@ -3143,6 +3154,93 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   appointmentBuilder: (context, calendarAppointmentDetails) {
                     final ScheduledEvent event = calendarAppointmentDetails.appointments.first;
                     final isMonthView = _calendarView == CalendarView.month;
+                    final isBereitschaft = event.originalObject is Bereitschaft;
+
+                    if (isBereitschaft) {
+                      final isDark = Theme.of(context).brightness == Brightness.dark;
+                      final bgColor = isDark
+                          ? const Color(0xFFF59E0B).withOpacity(0.18)
+                          : const Color(0xFFFEF3C7);
+                      final borderColor = isDark
+                          ? const Color(0xFFF59E0B)
+                          : const Color(0xFFB45309);
+                      final textColor = isDark
+                          ? const Color(0xFFFFFBEB)
+                          : const Color(0xFF78350F);
+                      final iconColor = borderColor;
+
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: bgColor,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: borderColor, width: 1.5),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        child: isMonthView
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.shield,
+                                    size: 10,
+                                    color: iconColor,
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Expanded(
+                                    child: Text(
+                                      event.title,
+                                      style: TextStyle(
+                                        color: textColor,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.shield,
+                                        size: 12,
+                                        color: iconColor,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(
+                                          event.title,
+                                          style: TextStyle(
+                                            color: textColor,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (event.subtitle != null && event.subtitle!.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 16, top: 1),
+                                      child: Text(
+                                        event.subtitle!,
+                                        style: TextStyle(color: textColor.withOpacity(0.85), fontSize: 10),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                      );
+                    }
+
                     return Container(
                       decoration: BoxDecoration(
                         color: event.background.withOpacity(0.9),
@@ -3163,6 +3261,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                                   event.title,
                                   style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                                   overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
                                 ),
                                 if (event.subtitle != null)
                                   Text(

@@ -3,6 +3,23 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [1.3.32+58] - 2026-10-24
+
+### Enhanced & Redesigned (Bereitschaftskalender: Sentinel Badge & CRM-Notizen-Anbindung)
+- **Kalender-Darstellung (`dashboard_screen.dart`)**:
+  - **Neues „Sentinel Badge“-Styling für Bereitschaften**: Ruf- und Büro-Bereitschaften werden im `SfCalendar` nicht mehr als massiver oranger Vollfarb-Block gerendert (Verwechslungsgefahr mit den fast 5.000 orangen Regelschichten im System), sondern als eigenständiges Sentinel-Badge mit Kontur.
+  - **Struktur & Kontur**: 1.5px Kontur, semitransparenter Kern und vorangestelltes Schild-Icon (`Icons.shield`), das Bereitschaften von Schichten vor Ort visuell sofort unterscheidet.
+  - **Dual-Mode Optimierung (WCAG AAA-Kontrast)**:
+    - **Dark Mode**: Warmes Amber-Gold (`#F59E0B`) mit getöntem Kern und weiß-goldenem Text.
+    - **Light Mode**: Sattes Bronze-Bernstein (`#B45309`) mit tiefbraunem Text (`#78350F`) auf zartem Goldgrund.
+  - **Permanente Sichtbarkeit**: Büro-Bereitschaften bleiben für alle Mitarbeiter im Kalender dauerhaft aktiv und sichtbar (kein Ausblenden), da sie den verbindlichen Wochenend-Ansprechpartner des Büros für das gesamte Personal repräsentieren.
+- **Detail-Modal (`dashboard_screen.dart`)**:
+  - **Dynamische Desktop-Notizen**: Bei Klick auf einen Bereitschaftseintrag wird unter „Notiz“ direkt das Feld `description` aus der Desktop-Variante von EspoCRM angezeigt, sodass Anweisungen, Übergaben und Hinweise des Büros ohne Medienbruch sichtbar sind.
+  - **Saubere deutsche Status-Übersetzung**: Status wird als *Geplant*, *Durchgeführt* oder *Nicht durchgeführt* dargestellt.
+  - **Schild-Icon im Modal-Header**: Titel zeigt das Schild-Icon in Signal-Gold.
+
+---
+
 ## [1.3.31+57] - 2026-10-21
 
 ### Added & Enhanced (Papier-AU & Notaufnahme-Freigabe bei Krankmeldungen)
