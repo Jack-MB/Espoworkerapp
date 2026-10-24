@@ -327,9 +327,27 @@ class _SlotsScreenState extends State<SlotsScreen> {
           if (localIn != null) {
             _checkedSlotTimes[slot.id] = localIn;
           }
-          // Alleinarbeiterschutz aktiv halten, falls Nachtschicht mit Alleinarbeit aktiv ist
+          // Alleinarbeiterschutz aktiv halten, falls Schicht mit Alleinarbeit aktiv ist
           if (slot.isAlleinarbeitNachtschicht && (slot.checkout == null || slot.checkout!.isEmpty)) {
-            if (!LocationTrackingService().isTracking) {
+            if (slot.requiresAlleinarbeitConsent) {
+              WidgetsBinding.instance.addPostFrameCallback((_) async {
+                if (mounted && slot.requiresAlleinarbeitConsent) {
+                  final consentGiven = await showAlleinarbeitConsentDialog(context, slot);
+                  if (consentGiven == true) {
+                    final success = await _apiService.confirmAlleinarbeitConsent(slotId: slot.id);
+                    if (success) {
+                      slot.alleinarbeitConsentAt = DateTime.now().toUtc().toIso8601String();
+                      LocationTrackingService().startTracking(
+                        slotId: slot.id,
+                        intervalMinutes: slot.alleinarbeitIntervallMinuten,
+                        objectName: slot.accountName ?? slot.objekteName,
+                      );
+                      if (mounted) setState(() {});
+                    }
+                  }
+                }
+              });
+            } else if (!LocationTrackingService().isTracking) {
               LocationTrackingService().startTracking(
                 slotId: slot.id,
                 intervalMinutes: slot.alleinarbeitIntervallMinuten,
