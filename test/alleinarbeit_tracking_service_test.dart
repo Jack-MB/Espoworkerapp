@@ -95,8 +95,8 @@ void main() {
       expect(daySlot.isNachtschicht, isFalse);
     });
 
-    test('isAlleinarbeitNachtschicht ONLY true for genuine night shifts with activated Alleinarbeit', () {
-      // Fall 1: Tagschicht mit versehentlich gesetzter Alleinarbeit -> MUSS FALSE SEIN
+    test('isAlleinarbeitActive and isAlleinarbeitNachtschicht reflect isAlleinarbeit for day and night', () {
+      // Fall 1: Tagschicht mit gesetzter Alleinarbeit -> Schutz aktiv
       final daySlotWithAllein = Slot(
         id: 's-day-allein',
         name: 'Tagesposten Tor 1',
@@ -107,10 +107,11 @@ void main() {
       );
       expect(daySlotWithAllein.isAlleinarbeit, isTrue);
       expect(daySlotWithAllein.isNachtschicht, isFalse);
-      expect(daySlotWithAllein.isAlleinarbeitNachtschicht, isFalse,
-          reason: 'Tagschichten dürfen NIEMALS in den Alleinarbeiterschutz fallen');
+      expect(daySlotWithAllein.isAlleinarbeitActive, isTrue,
+          reason: 'Alleinarbeit kann auch tagsüber aktiv sein');
+      expect(daySlotWithAllein.isAlleinarbeitNachtschicht, isTrue);
 
-      // Fall 2: Nachtschicht OHNE Alleinarbeit -> MUSS FALSE SEIN
+      // Fall 2: Schicht OHNE Alleinarbeit -> Schutz inaktiv
       final nightSlotWithoutAllein = Slot(
         id: 's-night-no-allein',
         name: 'Nachtstreife Doppelbesetzung',
@@ -121,10 +122,9 @@ void main() {
       );
       expect(nightSlotWithoutAllein.isNachtschicht, isTrue);
       expect(nightSlotWithoutAllein.isAlleinarbeit, isFalse);
-      expect(nightSlotWithoutAllein.isAlleinarbeitNachtschicht, isFalse,
-          reason: 'Nachtschichten ohne explizite Alleinarbeit dürfen nicht getrackt werden');
+      expect(nightSlotWithoutAllein.isAlleinarbeitActive, isFalse);
 
-      // Fall 3: Echte Nachtschicht MIT Alleinarbeit -> MUSS TRUE SEIN
+      // Fall 3: Nachtschicht MIT Alleinarbeit -> Schutz aktiv
       final nightSlotWithAllein = Slot(
         id: 's-night-allein',
         name: 'Sicherheits-Nachtstreife Zoom',
@@ -135,8 +135,7 @@ void main() {
       );
       expect(nightSlotWithAllein.isNachtschicht, isTrue);
       expect(nightSlotWithAllein.isAlleinarbeit, isTrue);
-      expect(nightSlotWithAllein.isAlleinarbeitNachtschicht, isTrue,
-          reason: 'Ausschließlich Nachtschichten mit Alleinarbeit aktivieren den Schutz');
+      expect(nightSlotWithAllein.isAlleinarbeitActive, isTrue);
     });
 
     test('parses isAlleinarbeit flexibly from various JSON representations (bool, int, string)', () {
@@ -148,20 +147,21 @@ void main() {
       expect(Slot.fromJson({'id': '6', 'name': 'S6', 'status': 'P', 'isAlleinarbeit': 0}).isAlleinarbeit, isFalse);
     });
 
-    test('requiresAlleinarbeitConsent ONLY prompts when night shift AND Alleinarbeit active AND consent pending', () {
-      // 1. Tagschicht mit Alleinarbeit -> KEINE Einwilligung erforderlich
-      final dayAllein = Slot(
+    test('requiresAlleinarbeitConsent prompts when Alleinarbeit active AND consent pending (regardless of time)', () {
+      // 1. Tagschicht MIT Alleinarbeit, noch kein Consent -> Einwilligung MUSS gefordert werden
+      final dayAlleinNoConsent = Slot(
         id: 'c1',
-        name: 'Tagesdienst Pforte',
+        name: 'Tagesdienst Allein Pforte',
         status: 'Planned',
         dateStart: '2026-10-24 07:00:00',
         dateEnd: '2026-10-24 16:00:00',
         isAlleinarbeit: true,
+        alleinarbeitConsentAt: null,
       );
-      expect(dayAllein.requiresAlleinarbeitConsent, isFalse,
-          reason: 'Tagschichten dürfen niemals einen Einwilligungsdialog auslösen');
+      expect(dayAlleinNoConsent.requiresAlleinarbeitConsent, isTrue,
+          reason: 'Auch bei Tagschichten mit Alleinarbeit ist die Einwilligung beim Check-In erforderlich');
 
-      // 2. Nachtschicht OHNE Alleinarbeit -> KEINE Einwilligung erforderlich
+      // 2. Schicht OHNE Alleinarbeit -> KEINE Einwilligung erforderlich
       final nightNoAllein = Slot(
         id: 'c2',
         name: 'Nachtschicht Team',
@@ -171,7 +171,7 @@ void main() {
         isAlleinarbeit: false,
       );
       expect(nightNoAllein.requiresAlleinarbeitConsent, isFalse,
-          reason: 'Nachtschichten ohne Alleinarbeit dürfen niemals einen Einwilligungsdialog auslösen');
+          reason: 'Schichten ohne Alleinarbeit dürfen niemals einen Einwilligungsdialog auslösen');
 
       // 3. Echte Nachtschicht MIT Alleinarbeit, noch keine Einwilligung -> Einwilligung MUSS gefordert werden
       final nightAlleinNoConsent = Slot(
@@ -186,7 +186,7 @@ void main() {
       expect(nightAlleinNoConsent.requiresAlleinarbeitConsent, isTrue,
           reason: 'Nachtschicht mit aktiver Alleinarbeit erfordert DGUV V23 Einwilligung beim Check-In');
 
-      // 4. Echte Nachtschicht MIT Alleinarbeit, Einwilligung bereits erfolgt -> KEINE erneute Abfrage
+      // 4. Schicht MIT Alleinarbeit, Einwilligung bereits erfolgt -> KEINE erneute Abfrage
       final nightAlleinWithConsent = nightAlleinNoConsent.copyWith(
         alleinarbeitConsentAt: '2026-10-24 21:00:45',
       );
