@@ -2083,7 +2083,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                                 const SizedBox(width: 8),
                                 const Expanded(
                                   child: Text(
-                                    'DGUV V23: Schutz-Einwilligung ausstehend!',
+                                    'Ortungsschutz: Einwilligung ausstehend!',
                                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber),
                                   ),
                                 ),
@@ -2105,7 +2105,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                                   }
                                 },
                                 icon: const Icon(Icons.security, size: 16),
-                                label: const Text('Jetzt DGUV-Schutz bestätigen', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                label: const Text('Jetzt Ortungsschutz bestätigen', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                                 style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700, foregroundColor: Colors.black),
                               ),
                             ),
@@ -2310,7 +2310,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     if (slot.requiresAlleinarbeitConsent) {
       final consentGiven = await showAlleinarbeitConsentDialog(context, slot);
       if (consentGiven != true) {
-        if (mounted) _showMsg('Check-In abgebrochen: Zustimmung zum DGUV V23 Schutz-Tracking erforderlich.', Colors.orange.shade800);
+        if (mounted) _showMsg('Check-In abgebrochen: Zustimmung zum Schutz-Tracking (DGUV V23 / Schutzauftrag) erforderlich.', Colors.orange.shade800);
         return;
       }
 

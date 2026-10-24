@@ -216,8 +216,8 @@ class NotificationService {
 
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'espo_tracking_channel',
-      'Alleinarbeiterschutz (DGUV V23)',
-      channelDescription: 'Aktiver Alleinarbeiterschutz & periodische Standortkontrolle',
+      'Taktischer Ortungsschutz (DGUV V23 / Schutzbegleitung)',
+      channelDescription: 'Aktiver Ortungsschutz & periodische Standortkontrolle',
       importance: Importance.low,
       priority: Priority.low,
       ongoing: true,

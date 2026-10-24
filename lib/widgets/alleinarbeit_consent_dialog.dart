@@ -29,7 +29,7 @@ Future<bool?> showAlleinarbeitConsentDialog(BuildContext context, Slot slot) {
           const SizedBox(width: 12),
           const Expanded(
             child: Text(
-              'Alleinarbeiterschutz',
+              'Taktischer Ortungsschutz',
               style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ),
@@ -55,7 +55,7 @@ Future<bool?> showAlleinarbeitConsentDialog(BuildContext context, Slot slot) {
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
-                      'Gemäß DGUV Vorschrift 23 § 8 & § 5 ArbSchG ist für diesen Einzelposten ein Schutz-Tracking angeordnet.',
+                      'Für diese Schicht ist ein Schutz-Tracking angeordnet (DGUV V23 § 8 Alleinarbeit, Personenschutz oder Schutzbegleitung gemäß § 5 ArbSchG).',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
                     ),
                   ),
@@ -63,7 +63,7 @@ Future<bool?> showAlleinarbeitConsentDialog(BuildContext context, Slot slot) {
               ),
             ),
             Text(
-              'Zu Ihrer persönlichen Sicherheit und schnellen Notfall-Lokalisierung übermittelt die App während dieser Schicht punktuell Ihren aktuellen Standort an die mobile Leitstelle.',
+              'Zu Ihrer persönlichen Sicherheit, Eigensicherung und schnellen Notfall-Lokalisierung übermittelt die App während dieser Schicht punktuell Ihren aktuellen Standort an die Leitstelle.',
               style: TextStyle(fontSize: 13, color: Colors.grey.shade300, height: 1.4),
             ),
             const SizedBox(height: 14),

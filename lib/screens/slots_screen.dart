@@ -640,7 +640,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Check-In abgebrochen: Für Alleinarbeitsschichten ist die Zustimmung zum Schutz-Tracking gemäß DGUV V23 erforderlich.'),
+              content: Text('Check-In abgebrochen: Für diesen Einsatz ist die Zustimmung zum Schutz-Tracking (DGUV V23 / Schutzauftrag) erforderlich.'),
               backgroundColor: Colors.orange,
             ),
           );
@@ -1681,7 +1681,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
                                                         ),
                                                         const SizedBox(width: 3),
                                                         Text(
-                                                          'Alleinarbeit (${slot.alleinarbeitIntervallMinuten}m)',
+                                                          'Schutz (${slot.alleinarbeitIntervallMinuten}m)',
                                                           style: const TextStyle(
                                                             fontSize: 10,
                                                             fontWeight: FontWeight.w600,
@@ -2389,7 +2389,7 @@ class _SlotsScreenState extends State<SlotsScreen> {
                   if (slot.isAlleinarbeitNachtschicht)
                     _buildDetailRow(
                       Icons.shield_outlined,
-                      'Alleinarbeiterschutz',
+                      'Ortung & Schutzbegleitung',
                       'Aktiviert (${slot.alleinarbeitIntervallMinuten} Min. Intervall)',
                     ),
                   if (kleidungInfo != null && kleidungInfo!.isNotEmpty)

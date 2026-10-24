@@ -3,6 +3,22 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [1.3.36+62] - 2026-10-24
+
+### Enhanced (Generalisierung auf Taktische Ortung & Schutzbegleitung)
+- **Taktische Schutzbegleitung & Eigensicherung (`alleinarbeit_consent_dialog.dart`)**:
+  - Dialog-Titel auf „Taktischer Ortungsschutz“ generalisiert.
+  - Gesetzliche Begründung und Schutzhinweis um Personenschutz, Kamerateambegleitung und mobile Schutzstreifen gemäß § 5 ArbSchG neben DGUV Vorschrift 23 § 8 erweitert:
+    *„Für diese Schicht ist ein Schutz-Tracking angeordnet (DGUV V23 § 8 Alleinarbeit, Personenschutz oder Schutzbegleitung gemäß § 5 ArbSchG). Zu Ihrer persönlichen Sicherheit, Eigensicherung und schnellen Notfall-Lokalisierung übermittelt die App während dieser Schicht punktuell Ihren aktuellen Standort an die Leitstelle.“*
+- **Schicht-Badges & Detail-Ansichten (`slots_screen.dart`, `dashboard_screen.dart`, `self_checkin_screen.dart`)**:
+  - Schichtkachel-Badge von reinem „Alleinarbeit“ auf prägnantes „Schutz (Xm)“ angepasst.
+  - Schicht-Detailansicht: Feldbezeichnung von „Alleinarbeiterschutz“ auf „Ortung & Schutzbegleitung“ aktualisiert.
+  - Bestätigungs- und Abbruchmeldungen harmonisiert auf Schutz-Tracking & Schutzbegleitung.
+- **Benachrichtigungskanal (`notification_service.dart`)**:
+  - Android-Benachrichtigungskanal auf *„Taktischer Ortungsschutz (DGUV V23 / Schutzbegleitung)“* aktualisiert.
+
+---
+
 ## [1.3.35+61] - 2026-10-24
 
 ### Fixed (Admin-Schichtsichtbarkeit & 2.000er API-Paginierung)

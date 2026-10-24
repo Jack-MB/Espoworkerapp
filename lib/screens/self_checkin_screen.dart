@@ -399,7 +399,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
       if (consentGiven != true) {
         if (mounted) {
           setState(() => _processingSlotId = null);
-          _showErrorSnackbar('Check-In abgebrochen: Für Alleinarbeitsschichten ist die Zustimmung zum Schutz-Tracking gemäß DGUV V23 erforderlich.');
+          _showErrorSnackbar('Check-In abgebrochen: Für diesen Einsatz ist die Zustimmung zum Schutz-Tracking (DGUV V23 / Schutzauftrag) erforderlich.');
         }
         return;
       }
