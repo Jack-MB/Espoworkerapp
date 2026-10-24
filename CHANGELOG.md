@@ -6,6 +6,13 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 ## [1.3.33+59] - 2026-10-24
 
 ### Added & Enhanced (DGUV V23 Alleinarbeiterschutz & Intelligentes Intervall-Tracking)
+- **Zentrale Eigenschaft & Strikte Check-In-Bedingung (`Slot.requiresAlleinarbeitConsent`)**:
+  - Garantiert, dass der DGUV V23 Aufklärungs- und Zustimmungsdialog ausnahmslos **erst beim tatsächlichen Check-In** aufpoppt, wenn:
+    1. Es sich definitiv um eine Nachtschicht handelt (`isNachtschicht == true`).
+    2. Der Alleinarbeiterschutz für diese Schicht im System explizit aktiviert ist (`isAlleinarbeit == true`).
+    3. Für diese Schicht bisher noch keine Einwilligung hinterlegt ist (`alleinarbeitConsentAt == null || empty`).
+  - Schließt Tagschichten, Schichten ohne Alleinarbeiterschutz sowie bereits quittierte Schichten formal und technisch aus.
+  - Angewendet in allen drei Check-In-Einstiegspunkten: `_performCheckIn` (`slots_screen.dart`), `_executeCheckIn` (`self_checkin_screen.dart`) und `_calendarCheckIn` (`dashboard_screen.dart`).
 - **Strikte Eingrenzung auf Nachtschichten (`Slot.isAlleinarbeitNachtschicht`)**:
   - Alleinarbeiterschutz und Tracking greifen **ausschließlich** bei echten Nachtschichten (`isNachtschicht == true`), für die im Backend explizit der Alleinarbeiterschutz aktiviert ist (`isAlleinarbeit == true`).
   - Erkennung basiert auf Schichtbezeichnung/Name ("Nacht") oder Arbeitszeitfenster (Start ab 19:00 oder vor 05:00 Uhr bzw. Mitternachtsüberschreitung) unter Berücksichtigung deutscher MEZ/Europe/Berlin-Zeitzonen (`espoUtcToLocal`).
@@ -14,16 +21,12 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
   - Wie vom Nutzer angewiesen, wurde jegliche dauerhafte Foreground-Service-Benachrichtigung in der Android/iOS-Statusleiste entfernt. Das punktuelle Quick-Fix-Tracking arbeitet diskret und ressourcenschonend im Hintergrund.
 - **Wiederverwendbarer Einwilligungsdialog (`alleinarbeit_consent_dialog.dart`) & All-Screen Check-In**:
   - Dialog erscheint **nur und erst beim tatsächlichen Check-In** auf einer echten Nachtschicht mit aktivem Alleinarbeiterschutz.
-  - Abgesichert über alle Einstiegspunkte der App:
-    - Schichtenliste & Schichtdetail (`slots_screen.dart`)
-    - Dedizierter Self-Service-Check-In Screen (`self_checkin_screen.dart`)
-    - Dashboard-Kalender-Direkt-Check-In (`dashboard_screen.dart`)
   - Vor dem Einchecken erfolgt die revisionssichere Erfassung der Einwilligung an `/AppLiveTracking/action/consent` (DGUV Vorschrift 23 § 8 & § 5 ArbSchG, DSGVO-Hinweis auf 14-Tage-Löschung).
 - **Automatischer Lebenszyklus & Stopp beim Check-Out**:
   - Tracking startet erst nach erfolgter Zustimmung und erfolgreichem Check-In.
   - Beim Check-Out oder Undo-Checkin wird das Tracking sofort und unwiderruflich beendet.
 - **Umfassende automatisierte Tests (`test/alleinarbeit_tracking_service_test.dart`)**:
-  - 86/86 Tests erfolgreich: Erkennung von Nacht- vs. Tagschichten, strikte logische Abgrenzung (`isAlleinarbeitNachtschicht`), flexible JSON-Typprüfung für booleans/strings/ints und sauberes Singleton-Lifecycle-Management.
+  - 87/87 Tests erfolgreich: Erkennung von Nacht- vs. Tagschichten, strikte logische Abgrenzung (`isAlleinarbeitNachtschicht`, `requiresAlleinarbeitConsent`), flexible JSON-Typprüfung für booleans/strings/ints und sauberes Singleton-Lifecycle-Management.
 
 ---
 

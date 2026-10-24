@@ -615,8 +615,8 @@ class _SlotsScreenState extends State<SlotsScreen> {
   }
 
   Future<void> _performCheckIn(Slot slot) async {
-    // DGUV V23 Alleinarbeiterschutz: Zustimmung vor dem Check-In einholen (NUR für Nachtschichten mit Alleinarbeit)
-    if (slot.isAlleinarbeitNachtschicht && (slot.alleinarbeitConsentAt == null || slot.alleinarbeitConsentAt!.isEmpty)) {
+    // DGUV V23 Alleinarbeiterschutz: Zustimmung vor dem Check-In einholen (STRIKT NUR für Nachtschichten mit Alleinarbeit)
+    if (slot.requiresAlleinarbeitConsent) {
       final consentGiven = await showAlleinarbeitConsentDialog(context, slot);
       if (consentGiven != true) {
         if (mounted) {

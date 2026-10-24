@@ -394,7 +394,7 @@ class _SelfCheckinScreenState extends State<SelfCheckinScreen> with WidgetsBindi
     }
 
     // DGUV V23 Alleinarbeiterschutz: Zustimmung vor dem Check-In einholen (STRIKT NUR für Nachtschichten mit Alleinarbeit)
-    if (slot.isAlleinarbeitNachtschicht && (slot.alleinarbeitConsentAt == null || slot.alleinarbeitConsentAt!.isEmpty)) {
+    if (slot.requiresAlleinarbeitConsent) {
       final consentGiven = await showAlleinarbeitConsentDialog(context, slot);
       if (consentGiven != true) {
         if (mounted) {

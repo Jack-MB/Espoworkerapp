@@ -438,4 +438,13 @@ class Slot {
 
   /// Alleinarbeiterschutz greift STRIKT nur, wenn Alleinarbeit aktiviert UND es eine Nachtschicht ist!
   bool get isAlleinarbeitNachtschicht => isAlleinarbeit && isNachtschicht;
+
+  /// Prüft, ob für den Check-In dieser Schicht eine Einwilligung gemäß DGUV V23 eingeholt werden MUSS:
+  /// Dies ist STRIKT NUR dann der Fall, wenn:
+  /// 1. Es sich um eine Nachtschicht handelt
+  /// 2. Der Alleinarbeiterschutz für diese Schicht explizit aktiviert ist
+  /// 3. Bisher noch keine Einwilligung für diese Schicht dokumentiert wurde
+  bool get requiresAlleinarbeitConsent =>
+      isAlleinarbeitNachtschicht &&
+      (alleinarbeitConsentAt == null || alleinarbeitConsentAt!.trim().isEmpty);
 }

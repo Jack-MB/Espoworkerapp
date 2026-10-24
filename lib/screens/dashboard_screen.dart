@@ -2259,8 +2259,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       return;
     }
 
-    // DGUV V23 Alleinarbeiterschutz: Zustimmung vor dem Check-In einholen (NUR für Nachtschichten mit Alleinarbeit)
-    if (slot.isAlleinarbeitNachtschicht && (slot.alleinarbeitConsentAt == null || slot.alleinarbeitConsentAt!.isEmpty)) {
+    // DGUV V23 Alleinarbeiterschutz: Zustimmung vor dem Check-In einholen (STRIKT NUR für Nachtschichten mit Alleinarbeit)
+    if (slot.requiresAlleinarbeitConsent) {
       final consentGiven = await showAlleinarbeitConsentDialog(context, slot);
       if (consentGiven != true) {
         if (mounted) _showMsg('Check-In abgebrochen: Zustimmung zum DGUV V23 Schutz-Tracking erforderlich.', Colors.orange.shade800);

@@ -147,6 +147,52 @@ void main() {
       expect(Slot.fromJson({'id': '5', 'name': 'S5', 'status': 'P', 'isAlleinarbeit': false}).isAlleinarbeit, isFalse);
       expect(Slot.fromJson({'id': '6', 'name': 'S6', 'status': 'P', 'isAlleinarbeit': 0}).isAlleinarbeit, isFalse);
     });
+
+    test('requiresAlleinarbeitConsent ONLY prompts when night shift AND Alleinarbeit active AND consent pending', () {
+      // 1. Tagschicht mit Alleinarbeit -> KEINE Einwilligung erforderlich
+      final dayAllein = Slot(
+        id: 'c1',
+        name: 'Tagesdienst Pforte',
+        status: 'Planned',
+        dateStart: '2026-10-24 07:00:00',
+        dateEnd: '2026-10-24 16:00:00',
+        isAlleinarbeit: true,
+      );
+      expect(dayAllein.requiresAlleinarbeitConsent, isFalse,
+          reason: 'Tagschichten dürfen niemals einen Einwilligungsdialog auslösen');
+
+      // 2. Nachtschicht OHNE Alleinarbeit -> KEINE Einwilligung erforderlich
+      final nightNoAllein = Slot(
+        id: 'c2',
+        name: 'Nachtschicht Team',
+        status: 'Planned',
+        dateStart: '2026-10-24 21:00:00',
+        dateEnd: '2026-10-25 06:00:00',
+        isAlleinarbeit: false,
+      );
+      expect(nightNoAllein.requiresAlleinarbeitConsent, isFalse,
+          reason: 'Nachtschichten ohne Alleinarbeit dürfen niemals einen Einwilligungsdialog auslösen');
+
+      // 3. Echte Nachtschicht MIT Alleinarbeit, noch keine Einwilligung -> Einwilligung MUSS gefordert werden
+      final nightAlleinNoConsent = Slot(
+        id: 'c3',
+        name: 'Nachtstreife Allein Zoom',
+        status: 'Planned',
+        dateStart: '2026-10-24 21:00:00',
+        dateEnd: '2026-10-25 06:00:00',
+        isAlleinarbeit: true,
+        alleinarbeitConsentAt: null,
+      );
+      expect(nightAlleinNoConsent.requiresAlleinarbeitConsent, isTrue,
+          reason: 'Nachtschicht mit aktiver Alleinarbeit erfordert DGUV V23 Einwilligung beim Check-In');
+
+      // 4. Echte Nachtschicht MIT Alleinarbeit, Einwilligung bereits erfolgt -> KEINE erneute Abfrage
+      final nightAlleinWithConsent = nightAlleinNoConsent.copyWith(
+        alleinarbeitConsentAt: '2026-10-24 21:00:45',
+      );
+      expect(nightAlleinWithConsent.requiresAlleinarbeitConsent, isFalse,
+          reason: 'Nach bereits erfolgter Einwilligung darf beim erneuten Check-In kein Dialog mehr erscheinen');
+    });
   });
 
   group('DGUV V23 LocationTrackingService State Tests', () {
