@@ -3,6 +3,16 @@
 Alle nennenswerten Änderungen an der MB-Worker App werden in dieser Datei dokumentiert.
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
+## [1.3.35+61] - 2026-10-24
+
+### Fixed (Admin-Schichtsichtbarkeit & 2.000er API-Paginierung)
+- **Behebung der Schicht-Abschneidung für Administratoren (`api_service.dart::getSlots`)**:
+  - **Problem**: Bei Benutzern mit Administrator-Rechten (`type = admin`), die im Gegensatz zu regulären Mitarbeitern (`read: own`) Zugriff auf den gesamten Unternehmensdienstplan haben, überstieg die Anzahl der Schichten im Standard-Abfragefenster (240 Tage) das EspoCRM-Serverlimit von maximal 2.000 Datensätzen (`recordsPerPageMax: 2000`, aktuell 2.647 Schichten). Da die API-Abfrage unpaginiert abgesetzt wurde, brach der Datenstrom beim 2.000sten Datensatz exakt am 20. Oktober 2026 um 07:00 Uhr ab. Alle nachfolgenden Schichten (inklusive aller 20 Schichten des Sonntags, 25.10.2026) wurden stillschweigend abgeschnitten.
+  - **Lösung**: Implementierung einer intelligenten Offset-Paginierungsschleife in `getSlots()` mit `offset` und `total`-Auswertung. Wenn mehr als 2.000 Schichten im System vorliegen, lädt die Worker App automatisch alle Folgeseiten nach.
+  - **Auswirkung**: Im Dashboard-Kalender (`SfCalendar`), der Schichten-Liste (`SlotsScreen`) und dem Master-Cache sind für Administratoren ab sofort alle Schichten des gesamten Monats lückenlos sichtbar.
+
+---
+
 ## [1.3.34+60] - 2026-10-24
 
 ### Added & Enhanced (DGUV V23 Alleinarbeiterschutz & Intelligentes Intervall-Tracking)

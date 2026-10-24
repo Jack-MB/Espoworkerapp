@@ -944,55 +944,87 @@ class ApiService {
     final endStr = '${endPlusOne.year.toString().padLeft(4, '0')}-${endPlusOne.month.toString().padLeft(2, '0')}-${endPlusOne.day.toString().padLeft(2, '0')}';
 
     final baseUri = Uri.parse(ServerConfig().apiUrl);
-    final url = Uri(
-      scheme: baseUri.scheme,
-      host: baseUri.host,
-      port: baseUri.hasPort ? baseUri.port : null,
-      path: '${baseUri.path}/Slots',
-      queryParameters: {
-        'maxSize': '2000',
-        'where[0][type]': 'greaterThanOrEquals',
-        'where[0][attribute]': 'dateStart',
-        'where[0][value]': startStr,
-        'where[1][type]': 'lessThanOrEquals',
-        'where[1][attribute]': 'dateStart',
-        'where[1][value]': endStr,
-        'orderBy': 'dateStart',
-        'order': 'asc',
-      },
-    );
+    final headers = await _getHeaders();
+    List<dynamic> allRawItems = [];
+    int offset = 0;
+    const int pageSize = 2000;
+    bool hasMore = true;
+    int pageSafetyCount = 0;
 
     try {
-      final response = await _HttpWithTimeout.get(url, headers: await _getHeaders());
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['list'] != null) {
-          _isLastSlotsFromCache = false;
-          try {
-            final prefs = await SharedPreferences.getInstance();
-            // 1. Update legacy single-request cache
-            await prefs.setString(_cachedSlotsKey, response.body);
-            await prefs.setString('${_cachedSlotsKey}_time', DateTime.now().toIso8601String());
+      while (hasMore && pageSafetyCount < 10) {
+        pageSafetyCount++;
+        final url = Uri(
+          scheme: baseUri.scheme,
+          host: baseUri.host,
+          port: baseUri.hasPort ? baseUri.port : null,
+          path: '${baseUri.path}/Slots',
+          queryParameters: {
+            'maxSize': pageSize.toString(),
+            'offset': offset.toString(),
+            'where[0][type]': 'greaterThanOrEquals',
+            'where[0][attribute]': 'dateStart',
+            'where[0][value]': startStr,
+            'where[1][type]': 'lessThanOrEquals',
+            'where[1][attribute]': 'dateStart',
+            'where[1][value]': endStr,
+            'orderBy': 'dateStart',
+            'order': 'asc',
+          },
+        );
 
-            // 2. Merge into master slot map (prevents narrow date queries from wiping out cache)
-            final String? masterJson = prefs.getString(_cachedSlotsMasterKey);
-            Map<String, dynamic> masterMap = {};
-            if (masterJson != null && masterJson.isNotEmpty) {
-              try {
-                masterMap = Map<String, dynamic>.from(json.decode(masterJson));
-              } catch (_) {}
+        final response = await _HttpWithTimeout.get(url, headers: headers);
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          if (data['list'] != null && data['list'] is List) {
+            final List list = data['list'];
+            allRawItems.addAll(list);
+
+            final int? total = data['total'] is int ? data['total'] as int : null;
+            if (total != null && allRawItems.length >= total) {
+              hasMore = false;
+            } else if (list.length < pageSize) {
+              hasMore = false;
+            } else {
+              offset += pageSize;
             }
-            for (var item in data['list']) {
-              if (item is Map && item['id'] != null) {
-                masterMap[item['id'].toString()] = item;
-              }
-            }
-            await prefs.setString(_cachedSlotsMasterKey, json.encode(masterMap));
-          } catch (e) {
-            debugPrint('Error saving slots master cache: $e');
+          } else {
+            hasMore = false;
           }
-          return (data['list'] as List).map((e) => Slot.fromJson(e)).toList();
+        } else {
+          debugPrint('getSlots error: HTTP ${response.statusCode}');
+          break;
         }
+      }
+
+      if (allRawItems.isNotEmpty) {
+        _isLastSlotsFromCache = false;
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          // 1. Update legacy single-request cache
+          final payload = json.encode({'total': allRawItems.length, 'list': allRawItems});
+          await prefs.setString(_cachedSlotsKey, payload);
+          await prefs.setString('${_cachedSlotsKey}_time', DateTime.now().toIso8601String());
+
+          // 2. Merge into master slot map (prevents narrow date queries from wiping out cache)
+          final String? masterJson = prefs.getString(_cachedSlotsMasterKey);
+          Map<String, dynamic> masterMap = {};
+          if (masterJson != null && masterJson.isNotEmpty) {
+            try {
+              masterMap = Map<String, dynamic>.from(json.decode(masterJson));
+            } catch (_) {}
+          }
+          for (var item in allRawItems) {
+            if (item is Map && item['id'] != null) {
+              masterMap[item['id'].toString()] = item;
+            }
+          }
+          await prefs.setString(_cachedSlotsMasterKey, json.encode(masterMap));
+        } catch (e) {
+          debugPrint('Error saving slots master cache: $e');
+        }
+
+        return allRawItems.map((e) => Slot.fromJson(e as Map<String, dynamic>)).toList();
       }
     } catch (e) {
       debugPrint('Network error in getSlots: $e. Falling back to offline cache.');
